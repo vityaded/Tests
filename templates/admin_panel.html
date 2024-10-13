@@ -1,0 +1,36 @@
+<!-- templates/admin_panel.html -->
+{% extends "base.html" %}
+
+{% block title %}Admin Panel - Test App{% endblock %}
+
+{% block content %}
+  <h1 class="my-4">Admin Panel</h1>
+  <h2>Test Results</h2>
+  <table class="table table-striped">
+    <thead>
+      <tr>
+        <th>User</th>
+        <th>Test</th>
+        <th>Score</th>
+        <th>Total Questions</th>
+        <th>Timestamp</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for result in test_results %}
+        <tr>
+          <td>{{ result.user.username }}</td>
+          <td>{{ result.test.name }}</td>
+          <td>{{ result.score }}</td>
+          <td>{{ result.total_questions }}</td>
+          <td>{{ result.timestamp.strftime('%Y-%m-%d %H:%M:%S') }}</td>
+        </tr>
+      {% else %}
+        <tr>
+          <td colspan="5">No test results found.</td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <a href="{{ url_for('index') }}" class="btn btn-link">Back to Home</a>
+{% endblock %}

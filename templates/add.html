@@ -1,0 +1,135 @@
+<!-- templates/add.html -->
+{% extends "base.html" %}
+
+{% block title %}Add Test - Test App{% endblock %}
+
+{% block content %}
+  <h1 class="my-4">Add a New Test</h1>
+  <form method="post" action="{{ url_for('add_test') }}">
+    {{ form.hidden_tag() }}
+    
+    <div class="form-group">
+      {{ form.book_title.label }}
+      {{ form.book_title(class="form-control", id="book_title") }}
+    </div>
+    <div class="form-group">
+      {{ form.test_name.label }}
+      {{ form.test_name(class="form-control", id="test_name") }}
+    </div>
+    <div class="form-group">
+      {{ form.time_limit.label }}
+      {{ form.time_limit(class="form-control") }}
+    </div>
+    <div class="form-group">
+      {{ form.test_content.label }}
+      <!-- Removed the 'required' attribute from the textarea -->
+      {{ form.test_content(class="form-control", id="test_content", required=False) }}
+    </div>
+
+    {{ form.submit(class="btn btn-primary") }}
+    <a href="{{ url_for('index') }}" class="btn btn-link">Back to Home</a>
+  </form>
+{% endblock %}
+
+{% block scripts %}
+  {{ super() }}
+  <!-- jQuery -->
+  <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+  <!-- jQuery UI for autocomplete -->
+  <script src="https://code.jquery.com/ui/1.12.1/jquery-ui.min.js"></script>
+  <link rel="stylesheet" href="https://code.jquery.com/ui/1.12.1/themes/base/jquery-ui.css">
+
+  <!-- CKEditor 5 Classic Editor -->
+  <script src="https://cdn.ckeditor.com/ckeditor5/35.3.0/classic/ckeditor.js"></script>
+
+  <script>
+    // Custom Upload Adapter for CKEditor - Base64 Upload
+    function MyCustomUploadAdapterPlugin(editor) {
+      editor.plugins.get('FileRepository').createUploadAdapter = (loader) => {
+        return new MyUploadAdapter(loader);
+      };
+    }
+
+    class MyUploadAdapter {
+      constructor(loader) {
+        this.loader = loader;
+      }
+
+      upload() {
+        return this.loader.file
+          .then(file => new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve({ default: reader.result });
+            reader.onerror = error => reject(error);
+            reader.readAsDataURL(file);
+          }));
+      }
+
+      abort() {
+        // Handle abort if needed
+      }
+    }
+
+    // Initialize CKEditor with Base64 Image Upload Adapter
+    ClassicEditor.create(document.querySelector('#test_content'), {
+      extraPlugins: [MyCustomUploadAdapterPlugin], // Add the custom upload adapter
+      toolbar: {
+        items: [
+          'heading', '|', 'bold', 'italic', 'link', 'bulletedList', 'numberedList', 'blockQuote', 'insertTable', '|',
+          'imageUpload', 'mediaEmbed', '|', 'undo', 'redo'
+        ]
+      },
+      image: {
+        toolbar: ['imageTextAlternative'], // Removed imageStyle:full and imageStyle:side
+        upload: {
+          types: ['jpeg', 'png', 'gif', 'bmp', 'webp']
+        }
+      }
+    })
+    .then(editor => {
+        window.editor = editor;
+    })
+    .catch(error => {
+        console.error(error);
+    });
+
+    // Ensure CKEditor updates the textarea before form submission
+    document.querySelector('form').addEventListener('submit', function(e) {
+      document.querySelector('#test_content').value = window.editor.getData();
+    });
+
+    // Autocomplete for Book Title
+    $(function() {
+      $("#book_title").autocomplete({
+        source: function(request, response) {
+          $.ajax({
+            url: "{{ url_for('autocomplete_book') }}",
+            data: {
+              q: request.term
+            },
+            success: function(data) {
+              response(data);
+            }
+          });
+        },
+        minLength: 2
+      });
+
+      // Autocomplete for Test Name
+      $("#test_name").autocomplete({
+        source: function(request, response) {
+          $.ajax({
+            url: "{{ url_for('autocomplete_test') }}",
+            data: {
+              q: request.term
+            },
+            success: function(data) {
+              response(data);
+            }
+          });
+        },
+        minLength: 2
+      });
+    });
+  </script>
+{% endblock %}

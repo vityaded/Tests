@@ -1,0 +1,101 @@
+{% extends "base.html" %}
+
+{% block title %}Take Test - {{ test_name }}{% endblock %}
+
+{% block content %}
+  <h1 class="my-4">Take the Test: {{ test_name }}</h1>
+  {% if time_limit %}
+    <div class="alert alert-info" id="timer">
+      Time Remaining: <span id="time">Loading...</span>
+    </div>
+  {% endif %}
+
+  <form method="post" id="testForm">
+    {% for line in processed_content %}
+      <div class="mb-3">
+        {{ line|safe }}
+      </div>
+    {% endfor %}
+    <button type="submit" class="btn btn-primary">Submit Test</button>
+  </form>
+  {% if score is not none %}
+    <h2 class="my-4">Your Score: {{ score }} / {{ total }}</h2>
+  {% endif %}
+  <a href="{{ url_for('index') }}" class="btn btn-link">Back to Home</a>
+{% endblock %}
+
+{% block scripts %}
+  <!-- Optional JavaScript and Bootstrap JS -->
+  <script src="https://code.jquery.com/jquery-3.5.1.slim.min.js"></script>
+  <script
+    src="https://cdn.jsdelivr.net/npm/bootstrap@4.5.2/dist/js/bootstrap.bundle.min.js"
+  ></script>
+  {% if time_limit %}
+  <script>
+    // Set the time limit in minutes
+    var timeLimit = {{ time_limit|default('null')|tojson }};
+    if (timeLimit !== null) {
+      // Calculate the end time
+      var endTime = new Date().getTime() + timeLimit * 60 * 1000;
+
+      // Update the count down every 1 second
+      var x = setInterval(function() {
+        // Get current time
+        var now = new Date().getTime();
+        // Find the distance between now and the end time
+        var distance = endTime - now;
+
+        // Time calculations for minutes and seconds
+        var minutes = Math.floor((distance % (1000 * 60 * 60)) / (1000 * 60));
+        var seconds = Math.floor((distance % (1000 * 60)) / 1000);
+
+        // Display the result in the element with id="time"
+        document.getElementById("time").innerHTML = minutes + "m " + seconds + "s ";
+
+        // If the count down is over, submit the form
+        if (distance <= 0) {
+          clearInterval(x);
+          document.getElementById("time").innerHTML = "Time's up!";
+          // Disable all input fields
+          var inputs = document.querySelectorAll('input[type="text"], select');
+          inputs.forEach(function(input) {
+            input.disabled = true;
+          });
+          // Submit the form automatically
+          document.getElementById("testForm").submit();
+        }
+      }, 1000);
+    } else {
+      // Hide the timer if timeLimit is invalid
+      document.getElementById("timer").style.display = 'none';
+    }
+  </script>
+  {% endif %}
+  <script>
+    document.addEventListener("DOMContentLoaded", function() {
+      var selects = document.querySelectorAll('select.custom-select');
+      selects.forEach(function(select) {
+        var longestOption = 0;
+        for (var i = 0; i < select.options.length; i++) {
+          var option = select.options[i];
+          var testSpan = document.createElement('span');
+          testSpan.style.visibility = 'hidden';
+          testSpan.style.fontFamily = window.getComputedStyle(select).fontFamily;
+          testSpan.style.fontSize = window.getComputedStyle(select).fontSize;
+          testSpan.style.fontWeight = window.getComputedStyle(select).fontWeight;
+          testSpan.style.whiteSpace = 'nowrap';
+          testSpan.innerText = option.text;
+          document.body.appendChild(testSpan);
+          var optionWidth = testSpan.offsetWidth;
+          document.body.removeChild(testSpan);
+
+          if (optionWidth > longestOption) {
+            longestOption = optionWidth;
+          }
+        }
+        // Add some extra space
+        select.style.width = (longestOption + 40) + 'px';
+      });
+    });
+  </script>
+{% endblock %}

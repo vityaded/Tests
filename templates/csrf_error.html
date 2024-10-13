@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+
+{% block title %}CSRF Error{% endblock %}
+
+{% block content %}
+  <h1 class="my-4">Form Submission Error</h1>
+  <div class="alert alert-danger">
+    {{ reason }}
+  </div>
+  <a href="{{ url_for('index') }}" class="btn btn-primary">Back to Home</a>
+{% endblock %}

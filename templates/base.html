@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>{% block title %}Test App{% endblock %}</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+  <!-- Bootstrap CSS -->
+  <link
+    rel="stylesheet"
+    href="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css"
+  >
+  <!-- Include any additional styles -->
+  <meta name="csrf-token" content="{{ csrf_token }}">
+  <style>
+    /* Custom styles */
+    .correct {
+      border: 2px solid green !important;
+    }
+    .incorrect {
+      border: 2px solid red !important;
+    }
+    .correct-answer {
+      color: green;
+    }
+    .navbar-brand, .nav-link {
+      white-space: nowrap;
+    }
+    .form-control-inline {
+      display: inline-block;
+      width: auto;
+      vertical-align: middle;
+    }
+    /* Ensure input and select elements are inline and auto-width */
+    .form-control.d-inline-block, .custom-select {
+      display: inline-block;
+      width: auto;
+      vertical-align: middle;
+    }
+    /* Adjust the width of the autocomplete input */
+    #book_title.ui-autocomplete-input {
+      width: 100% !important;
+    }
+    /* Adjust z-index for autocomplete suggestions */
+    .ui-autocomplete {
+      z-index: 1051;
+    }
+  </style>
+</head>
+<body>
+  <!-- Navigation bar -->
+  <nav class="navbar navbar-expand-lg navbar-light bg-light">
+    <a class="navbar-brand" href="{{ url_for('index') }}">Test App</a>
+    <button class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarNav" aria-controls="navbarNav" aria-expanded="false" aria-label="Toggle navigation">
+      <span class="navbar-toggler-icon"></span>
+    </button>
+    <div class="collapse navbar-collapse" id="navbarNav">
+      <ul class="navbar-nav mr-auto">
+        {% if current_user.is_authenticated %}
+          <li class="nav-item">
+            <a class="nav-link" href="{{ url_for('add_test') }}">Add Test</a>
+          </li>
+          {% if current_user.is_admin %}
+            <li class="nav-item">
+              <a class="nav-link" href="{{ url_for('admin_panel') }}">Admin Panel</a>
+            </li>
+          {% endif %}
+        {% endif %}
+      </ul>
+      <ul class="navbar-nav">
+        {% if current_user.is_authenticated %}
+          <li class="nav-item">
+            <span class="navbar-text">Hello, {{ current_user.username }}!</span>
+          </li>
+          <li class="nav-item">
+            <a class="nav-link" href="{{ url_for('logout') }}">Logout</a>
+          </li>
+        {% else %}
+          <li class="nav-item">
+            <a class="nav-link" href="{{ url_for('login') }}">Login</a>
+          </li>
+          <li class="nav-item">
+            <a class="nav-link" href="{{ url_for('signup') }}">Sign Up</a>
+          </li>
+        {% endif %}
+      </ul>
+    </div>
+  </nav>
+
+  <!-- Main container -->
+  <div class="container">
+    <!-- Flash messages -->
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        {% for category, message in messages %}
+          <div class="alert alert-{{ category }} mt-3">{{ message }}</div>
+        {% endfor %}
+      {% endif %}
+    {% endwith %}
+    <!-- Content block -->
+    {% block content %}{% endblock %}
+  </div>
+
+  <!-- Scripts block -->
+  {% block scripts %}
+    <!-- Include the full version of jQuery -->
+    <script src="https://code.jquery.com/jquery-3.5.1.min.js"></script>
+    <!-- Include Bootstrap JS -->
+    <script
+      src="https://cdn.jsdelivr.net/npm/bootstrap@4.5.2/dist/js/bootstrap.bundle.min.js"
+    ></script>
+  {% endblock %}
+</body>
+</html>

@@ -1,0 +1,21 @@
+<!-- templates/login.html -->
+{% extends "base.html" %}
+
+{% block title %}Login - Test App{% endblock %}
+
+{% block content %}
+  <h1 class="my-4">Login</h1>
+  <form method="post">
+    {{ form.hidden_tag() }}
+    <div class="form-group">
+      {{ form.username.label }}
+      {{ form.username(class="form-control") }}
+    </div>
+    <div class="form-group">
+      {{ form.password.label }}
+      {{ form.password(class="form-control") }}
+    </div>
+    {{ form.submit(class="btn btn-primary") }}
+    <a href="{{ url_for('signup') }}" class="btn btn-link">Sign Up</a>
+  </form>
+{% endblock %}

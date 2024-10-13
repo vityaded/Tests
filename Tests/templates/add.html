@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+
+{% block title %}Add Test - Test App{% endblock %}
+
+{% block content %}
+  <h1 class="my-4">Add a New Test</h1>
+  <form method="post">
+    <div class="form-group">
+      <label for="book_title">Book Title:</label>
+      <input
+        type="text"
+        id="book_title"
+        name="book_title"
+        class="form-control"
+        required
+      >
+    </div>
+    <div class="form-group">
+      <label for="test_name">Test Name:</label>
+      <input
+        type="text"
+        id="test_name"
+        name="test_name"
+        class="form-control"
+        required
+      >
+    </div>
+    <div class="form-group">
+      <label for="time_limit">Time Limit (minutes):</label>
+      <input
+        type="number"
+        id="time_limit"
+        name="time_limit"
+        class="form-control"
+        min="1"
+      >
+    </div>
+    <div class="form-group">
+      <label for="test_content">Test Content (questions with answers in []):</label>
+      <textarea
+        id="test_content"
+        name="test_content"
+        class="form-control"
+        rows="10"
+        required
+      ></textarea>
+    </div>
+    <button type="submit" class="btn btn-primary">Add Test</button>
+    <a href="{{ url_for('index') }}" class="btn btn-link">Back to Home</a>
+  </form>
+{% endblock %}

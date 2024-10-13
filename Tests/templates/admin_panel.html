@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+
+{% block title %}Admin Panel - Test App{% endblock %}
+
+{% block content %}
+  <h1 class="my-4">Admin Panel</h1>
+  <h2>Test Results</h2>
+  <div class="table-responsive">
+    <table class="table table-striped">
+      <thead>
+        <tr>
+          <th>User</th>
+          <th>Test</th>
+          <th>Score</th>
+          <th>Total Questions</th>
+          <th>Date</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for result in test_results %}
+          <tr>
+            <td>{{ result.user.username }}</td>
+            <td>{{ result.test.name }}</td>
+            <td>{{ result.score }}</td>
+            <td>{{ result.total_questions }}</td>
+            <td>{{ result.timestamp.strftime('%Y-%m-%d %H:%M:%S') }}</td>
+          </tr>
+        {% else %}
+          <tr>
+            <td colspan="5">No test results available.</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+{% endblock %}

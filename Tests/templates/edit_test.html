@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+
+{% block title %}Edit Test - {{ test.name }}{% endblock %}
+
+{% block content %}
+  <h1 class="my-4">Edit Test: {{ test.name }}</h1>
+  <form method="post">
+    <div class="form-group">
+      <label for="test_name">Test Name:</label>
+      <input
+        type="text"
+        id="test_name"
+        name="test_name"
+        class="form-control"
+        value="{{ test.name }}"
+        required
+      >
+    </div>
+    <div class="form-group">
+      <label for="time_limit">Time Limit (minutes):</label>
+      <input
+        type="number"
+        id="time_limit"
+        name="time_limit"
+        class="form-control"
+        min="1"
+        value="{{ test.time_limit }}"
+      >
+    </div>
+    <div class="form-group">
+      <label for="test_content">Test Content (questions with answers in []):</label>
+      <textarea
+        id="test_content"
+        name="test_content"
+        class="form-control"
+        rows="10"
+        required
+      >{{ test.content }}</textarea>
+    </div>
+    <button type="submit" class="btn btn-primary">Update Test</button>
+    <a href="{{ url_for('index') }}" class="btn btn-link">Back to Home</a>
+  </form>
+{% endblock %}

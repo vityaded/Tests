@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+
+{% block title %}Home - Test App{% endblock %}
+
+{% block content %}
+  <h1 class="my-4">Available Tests</h1>
+  {% for test in tests %}
+    <div class="test-item mb-4">
+      <h3>{{ test.name }}</h3>
+      <p>Book: {{ test.book.title }}</p>
+      {% if test.time_limit %}
+        <p>Time Limit: {{ test.time_limit }} minutes</p>
+      {% else %}
+        <p>No Time Limit</p>
+      {% endif %}
+      <div class="btn-group" role="group">
+        <a href="{{ url_for('take_test', test_id=test.id) }}" class="btn btn-primary">Take Test</a>
+        {% if current_user.is_authenticated and (current_user.is_admin or test.created_by == current_user.id) %}
+          <a href="{{ url_for('edit_test', test_id=test.id) }}" class="btn btn-secondary">Edit</a>
+          <form action="{{ url_for('delete_test', test_id=test.id) }}" method="post" style="display: inline;">
+            <button type="submit" class="btn btn-danger" onclick="return confirm('Are you sure you want to delete this test?');">Delete</button>
+          </form>
+        {% endif %}
+      </div>
+    </div>
+  {% else %}
+    <p>No tests available.</p>
+  {% endfor %}
+{% endblock %}
