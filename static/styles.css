@@ -1,0 +1,24 @@
+
+@media (max-width: 768px) {
+    .container {
+      padding-left: 15px;
+      padding-right: 15px;
+    }
+    .card-title {
+      font-size: 1.2rem; /* Make text slightly larger for mobile */
+    }
+    .btn {
+      font-size: 1rem; /* Ensure buttons are easily clickable */
+      padding: 10px 15px;
+    }
+  }
+  
+  @media (min-width: 769px) {
+    .card {
+      transition: transform 0.2s ease-in-out;
+    }
+    .card:hover {
+      transform: scale(1.05); /* Add a hover effect on desktop */
+    }
+  }
+  

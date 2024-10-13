@@ -1,50 +1,12 @@
 <!DOCTYPE html>
-<html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>{% block title %}Test App{% endblock %}</title>
   <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+  <title>{% block title %}Test App{% endblock %}</title>
   <!-- Bootstrap CSS -->
-  <link
-    rel="stylesheet"
-    href="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css"
-  >
-  <!-- Include any additional styles -->
-  <meta name="csrf-token" content="{{ csrf_token }}">
-  <style>
-    /* Custom styles */
-    .correct {
-      border: 2px solid green !important;
-    }
-    .incorrect {
-      border: 2px solid red !important;
-    }
-    .correct-answer {
-      color: green;
-    }
-    .navbar-brand, .nav-link {
-      white-space: nowrap;
-    }
-    .form-control-inline {
-      display: inline-block;
-      width: auto;
-      vertical-align: middle;
-    }
-    /* Ensure input and select elements are inline and auto-width */
-    .form-control.d-inline-block, .custom-select {
-      display: inline-block;
-      width: auto;
-      vertical-align: middle;
-    }
-    /* Adjust the width of the autocomplete input */
-    #book_title.ui-autocomplete-input {
-      width: 100% !important;
-    }
-    /* Adjust z-index for autocomplete suggestions */
-    .ui-autocomplete {
-      z-index: 1051;
-    }
-  </style>
+  <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css">
+  <!-- Link to your custom styles.css -->
+  <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
 </head>
 <body>
   <!-- Navigation bar -->
