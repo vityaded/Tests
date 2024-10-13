@@ -1,3 +1,4 @@
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css">
 {% extends "base.html" %}
 
 {% block title %}Learn Test - {{ test_name }}{% endblock %}
@@ -18,11 +19,10 @@
   </form>
 
   <!-- Translation and pronunciation area -->
-  <div id="translation-container" class="mt-4">
-    <h5>Selected Word:</h5>
+  <div id="translation-popup" class="mt-4" style="display: none;">
     <p id="translated-word" class="font-weight-bold"></p>
-    <button id="hear-pronunciation" class="btn btn-secondary" style="display: none;">
-      <i class="fas fa-volume-up"></i> Hear Pronunciation
+    <button id="hear-pronunciation" class="btn btn-secondary">
+      <i class="fas fa-volume-up"></i>
     </button>
   </div>
 
@@ -33,48 +33,45 @@
 
   <script>
     // Function to handle word selection and translation
-    function translateAndPronounce(word) {
-    fetch(`/translate?word=${encodeURIComponent(word)}`)
+    function translateAndPronounce(word, event) {
+      fetch(`/translate?word=${encodeURIComponent(word)}`)
         .then(response => response.json())
         .then(data => {
-            // Display translation
-            document.getElementById('translated-word').textContent = `${word} - ${data.translation}`;
-                        // Show the pronunciation button if pronunciation URL is provided
-                        const pronunciationBtn = document.getElementById('hear-pronunciation');
-            pronunciationBtn.style.display = 'inline-block';
+          // Display translation in the popup
+          document.getElementById('translated-word').textContent = `${word} - ${data.translation}`;
 
-            pronunciationBtn.onclick = function() {
-                // Use a dynamically generated pronunciation URL
-                const audio = new Audio(`/tts?text=${encodeURIComponent(word)}&lang=en`);
-                audio.play();
-            };
+          // Set the position of the popup near the clicked word
+          const popup = document.getElementById('translation-popup');
+          popup.style.display = 'block';
+          popup.style.position = 'absolute';
+          popup.style.top = `${event.pageY}px`;
+          popup.style.left = `${event.pageX}px`;
+
+          // Play pronunciation
+          const pronunciationBtn = document.getElementById('hear-pronunciation');
+          pronunciationBtn.onclick = function() {
+            const audio = new Audio(`/tts?text=${encodeURIComponent(word)}&lang=en`);
+            audio.play();
+          };
         })
         .catch(error => console.error('Error:', error));
-}
+    }
 
-// Add event listener to each word element
-document.querySelectorAll('.word').forEach(function(element) {
-    element.addEventListener('click', function() {
-        const word = this.textContent.trim();
-        translateAndPronounce(word); // Call the translation and pronunciation function
-    });
-});
-
-    // Function to make words clickable without affecting form inputs
+    // Function to make words clickable
     function makeWordsClickable() {
       document.querySelectorAll('.line-content').forEach(function(paragraph) {
         let html = paragraph.innerHTML;
-        
-        // Split the text by HTML tags to separate form inputs from the rest of the content
+
+        // Split text by <input> tags and handle words separately
         const textSegments = html.split(/(<input.*?>)/g);
-        paragraph.innerHTML = '';  // Clear the content to rebuild it with clickable words
+        paragraph.innerHTML = '';  // Clear the paragraph content
 
         textSegments.forEach(segment => {
           if (segment.startsWith('<input')) {
-            // If it's an input field, append it directly
+            // If it's an input, add it directly
             paragraph.innerHTML += segment;
           } else {
-            // If it's text, split into words and make them clickable
+            // Split the text into words and make them clickable
             const words = segment.split(/\s+/);
             words.forEach(word => {
               if (word.trim()) {
@@ -82,8 +79,8 @@ document.querySelectorAll('.word').forEach(function(element) {
                 span.textContent = word;
                 span.style.cursor = 'pointer';
                 span.className = 'word';
-                span.onclick = function() {
-                  translateAndPronounce(word.trim());
+                span.onclick = function(event) {
+                  translateAndPronounce(word.trim(), event);
                 };
                 paragraph.appendChild(span);
                 paragraph.appendChild(document.createTextNode(' '));  // Add space after each word
@@ -94,7 +91,7 @@ document.querySelectorAll('.word').forEach(function(element) {
       });
     }
 
-    // Initialize clickable words after the page loads
+    // Make words clickable when the page is ready
     document.addEventListener('DOMContentLoaded', makeWordsClickable);
   </script>
 {% endblock %}
