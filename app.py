@@ -470,6 +470,26 @@ def search():
         return render_template('search_results.html', tests=tests, query=query, search_option=search_option)
 
 
+@app.route('/autocomplete_search')
+def autocomplete_search():
+    query = request.args.get('query', '').strip()
+    search_option = request.args.get('search_option', 'books')
+
+    results = []
+
+    if query:
+        if search_option == 'books':
+            # Search for matching books by title
+            books = Book.query.filter(Book.title.ilike(f'%{query}%')).all()
+            results = [{'label': book.title, 'value': book.title} for book in books]
+        elif search_option == 'tests':
+            # Search for matching tests by name
+            tests = Test.query.filter(Test.name.ilike(f'%{query}%')).all()
+            results = [{'label': test.name, 'value': test.name} for test in tests]
+
+    return jsonify(results)
+
+
 # Route: Admin Panel
 @app.route('/admin')
 @admin_required

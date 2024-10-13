@@ -5,14 +5,13 @@
 {% block content %}
   <h1 class="my-4 text-center">Search for Books or Tests</h1>
 
-  <!-- Search Form -->
   <form method="GET" action="{{ url_for('search') }}" class="form-inline justify-content-center mb-4">
     <div class="form-group">
-      <label for="query" class="sr-only">Search</label>
-      <input type="text" name="query" id="query" class="form-control" placeholder="Search for books or tests" required>
+      <label for="search_query" class="sr-only">Search</label> 
+      <input type="text" name="query" id="search_query" class="form-control" placeholder="Search for books or tests" required>
     </div>
     <div class="form-group mx-2">
-      <label for="search_option" class="sr-only">Search Option</label>
+      <label for="search_option" class="sr-only">Search Option</label> 
       <select name="search_option" id="search_option" class="form-control">
         <option value="books">Books</option>
         <option value="tests">Tests</option>
@@ -21,7 +20,6 @@
     <button type="submit" class="btn btn-primary">Search</button>
   </form>
 
-  <!-- Available Books Section -->
   <h2 class="my-4 text-center">Available Books</h2>
 
   <div class="row">
@@ -39,4 +37,31 @@
       <p class="text-center">No books available.</p>
     {% endfor %}
   </div>
+{% endblock %}
+
+{% block scripts %}
+  {{ super() }}
+
+  <script src="https://code.jquery.com/ui/1.12.1/jquery-ui.js"></script>
+
+  <script>
+    $(function() {
+      $('#search_query').autocomplete({
+        source: function(request, response) {
+          const searchOption = $('#search_option').val();
+          $.ajax({
+            url: "{{ url_for('autocomplete_search') }}",
+            data: {
+              query: request.term,
+              search_option: searchOption
+            },
+            success: function(data) {
+              response(data);
+            }
+          });
+        },
+        minLength: 2
+      });
+    });
+  </script>
 {% endblock %}
