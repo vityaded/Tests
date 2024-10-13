@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+
+{% block title %}Learn Test - {{ test_name }}{% endblock %}
+
+{% block content %}
+  <h1 class="my-4">{{ test_name }}</h1>
+
+  <form method="post">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}"/>
+    
+    {% for line in processed_content %}
+      <p>{{ line | safe }}</p>
+    {% endfor %}
+    
+    <button type="submit" class="btn btn-primary">Check Answers</button>
+  </form>
+
+{% endblock %}

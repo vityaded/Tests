@@ -1,24 +1,178 @@
+/* General body styling */
+body {
+  font-family: 'Helvetica Neue', Arial, sans-serif;
+  background-color: #f8f9fa; /* Light background */
+  color: #333;
+}
 
+/* Navbar customization */
+.navbar {
+  background-color: #007bff; /* Bootstrap primary color */
+}
+
+.navbar-brand, .nav-link {
+  color: rgb(71, 69, 69) !important;
+  font-weight: bold;
+}
+
+.navbar-brand:hover, .nav-link:hover {
+  color: #e9ecef !important; /* Lighter color on hover */
+}
+
+/* Container padding */
+.container {
+  padding-top: 20px;
+  padding-bottom: 20px;
+}
+
+/* Card styling */
+.card {
+  border: 1px solid #ddd;
+  border-radius: 8px;
+  transition: transform 0.2s ease-in-out;
+}
+
+.card:hover {
+  transform: scale(1.05); /* Slight zoom on hover */
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1); /* Light shadow on hover */
+}
+
+.card-title {
+  font-size: 1.25rem; /* Slightly larger title font */
+  font-weight: bold;
+}
+
+.card-text {
+  font-size: 1rem;
+}
+
+/* Button styling */
+.btn {
+  font-size: 1rem;
+  padding: 10px 15px;
+  border-radius: 5px;
+}
+
+.btn-primary {
+  background-color: #007bff;
+  border-color: #007bff;
+}
+
+.btn-primary:hover {
+  background-color: #0056b3;
+  border-color: #0056b3;
+}
+
+/* jQuery UI Autocomplete Styling */
+.ui-autocomplete {
+  background-color: white;
+  border: 1px solid #ddd;
+  font-size: 1rem; /* Adjust font size for better visibility */
+  z-index: 1051; /* Ensure the dropdown appears above other content */
+  max-height: 200px; /* Limit height of dropdown */
+  overflow-y: auto; /* Enable scrolling if there are too many suggestions */
+  border-radius: 5px; /* Rounded corners for dropdown */
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1); /* Add shadow to dropdown */
+}
+
+.ui-menu-item {
+  padding: 10px 15px;
+  border-bottom: 1px solid #ddd; /* Add separation between items */
+  cursor: pointer;
+}
+
+.ui-menu-item:hover {
+  background-color: #007bff; /* Bootstrap primary color */
+  color: white;
+}
+
+.ui-state-active {
+  background-color: #007bff; /* Active item background */
+  color: white;
+  font-weight: bold;
+}
+
+.ui-helper-hidden-accessible {
+  display: none;
+}
+
+/* Flash message styling */
+.alert {
+  margin-top: 15px;
+}
+
+.alert-success {
+  background-color: #28a745;
+  color: white;
+}
+
+.alert-danger {
+  background-color: #dc3545;
+  color: white;
+}
+
+/* Form styling */
+.form-inline .form-group {
+  margin-right: 10px;
+}
+
+input.form-control, select.form-control {
+  width: auto;
+  display: inline-block;
+  vertical-align: middle;
+}
+
+/* Footer styling */
+footer {
+  background-color: #007bff;
+  color: white;
+  padding: 20px 0;
+  text-align: center;
+}
+
+/* Custom styles to improve usability on smartphones */
 @media (max-width: 768px) {
-    .container {
-      padding-left: 15px;
-      padding-right: 15px;
-    }
-    .card-title {
-      font-size: 1.2rem; /* Make text slightly larger for mobile */
-    }
-    .btn {
-      font-size: 1rem; /* Ensure buttons are easily clickable */
-      padding: 10px 15px;
-    }
+  .container {
+    padding-left: 15px;
+    padding-right: 15px;
   }
   
-  @media (min-width: 769px) {
-    .card {
-      transition: transform 0.2s ease-in-out;
-    }
-    .card:hover {
-      transform: scale(1.05); /* Add a hover effect on desktop */
-    }
+  .card-title {
+    font-size: 1.2rem; /* Make text slightly larger for mobile */
   }
-  
+
+  .btn {
+    font-size: 1rem; /* Ensure buttons are easily clickable */
+    padding: 10px 15px;
+  }
+
+  footer {
+    padding: 10px 0; /* Add more padding on mobile */
+  }
+}
+
+/* Desktop hover effects for cards */
+@media (min-width: 769px) {
+  .card {
+    transition: transform 0.2s ease-in-out;
+  }
+
+  .card:hover {
+    transform: scale(1.05); /* Add a hover effect on desktop */
+  }
+}
+
+.correct-answer {
+  color: green;
+  font-weight: bold;
+}
+
+.incorrect {
+  border: 2px solid red;
+}
+
+.correct {
+  border: 2px solid green;
+  color: green;
+}
+

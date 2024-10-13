@@ -325,7 +325,6 @@ def take_test(test_id):
     # Function to replace answers with input fields or dropdowns
     def replace_answers(line):
         nonlocal question_counter
-        # Patterns for dropdowns and input fields
         dropdown_pattern = r'#\s*\[([^\]]+)\]\s*([^\#]+)\s*#'
         input_pattern = r'\[([^\]]+)\]'
 
@@ -338,24 +337,21 @@ def take_test(test_id):
             correct_answers[qid] = correct_answer
             question_counter += 1
 
-            # Determine class based on correctness
             if request.method == 'POST':
-                user_answer = request.form.get(qid, '')
-                select_class = 'custom-select correct' if user_answer.strip().lower() == correct_answer.strip().lower() else 'custom-select incorrect'
+                user_answer = request.form.get(qid, '').strip().lower()
+                select_class = 'custom-select correct' if user_answer == correct_answer.lower() else 'custom-select incorrect'
                 disabled = 'disabled'
             else:
                 select_class = 'custom-select'
                 disabled = ''
 
-            # Build the select element
-            select_html = f'<select name="{qid}" class="{select_class}" {disabled} required style="display: inline-block; width: auto;">'
+            select_html = f'<select name="{qid}" class="{select_class}" {disabled} style="display: inline-block; width: auto;">'
             for option in options:
-                selected = 'selected' if request.method == 'POST' and user_answer == option else ''
+                selected = 'selected' if request.method == 'POST' and user_answer == option.strip().lower() else ''
                 select_html += f'<option value="{option}" {selected}>{option}</option>'
             select_html += '</select>'
 
-            # Show correct answer if incorrect
-            if request.method == 'POST' and user_answer.strip().lower() != correct_answer.strip().lower():
+            if request.method == 'POST' and user_answer != correct_answer.lower():
                 select_html += f' <span class="correct-answer">(Correct answer: {correct_answer})</span>'
 
             return select_html
@@ -369,15 +365,15 @@ def take_test(test_id):
 
             if request.method == 'POST':
                 user_answer = request.form.get(qid, '')
-                input_class = 'form-control correct' if user_answer.strip().lower() == correct_answer.strip().lower() else 'form-control incorrect'
+                input_class = 'form-control correct' if user_answer.strip().lower() == correct_answer.lower() else 'form-control incorrect'
                 readonly = 'readonly'
             else:
                 input_class = 'form-control'
                 readonly = ''
 
-            input_html = f'<input type="text" name="{qid}" value="{user_answer if request.method == "POST" else ""}" class="{input_class}" style="width: auto;" {readonly} required>'
+            input_html = f'<input type="text" name="{qid}" value="{user_answer if request.method == "POST" else ""}" class="{input_class}" style="width: auto;" {readonly}>'
 
-            if request.method == 'POST' and user_answer.strip().lower() != correct_answer.strip().lower():
+            if request.method == 'POST' and user_answer.strip().lower() != correct_answer.lower():
                 input_html += f' <span class="correct-answer">(Correct answer: {correct_answer})</span>'
 
             return input_html
@@ -412,7 +408,7 @@ def take_test(test_id):
         # Calculate score
         for qid, correct_answer in correct_answers.items():
             user_answer = request.form.get(qid, '')
-            if user_answer.strip().lower() == correct_answer.strip().lower():
+            if user_answer.strip().lower() == correct_answer.lower():
                 score += 1
 
         # Save test result
@@ -451,6 +447,7 @@ def take_test(test_id):
             time_limit=time_limit
         )
 
+
 @app.route('/search')
 def search():
     query = request.args.get('query', '').strip()
@@ -468,6 +465,100 @@ def search():
         # Search for tests by name
         tests = Test.query.filter(Test.name.ilike(f'%{query}%')).all()
         return render_template('search_results.html', tests=tests, query=query, search_option=search_option)
+
+
+@app.route('/learn/<int:test_id>', methods=['GET', 'POST'])
+@login_required
+def learn_test(test_id):
+    test = Test.query.get_or_404(test_id)
+    test_content = test.content
+
+    # Initialize variables
+    processed_content = []
+    correct_answers = {}
+    question_counter = 1
+    user_correct = {}
+
+    # Function to replace answers with input fields or dropdowns
+    def replace_answers(line):
+        nonlocal question_counter
+        dropdown_pattern = r'#\s*\[([^\]]+)\]\s*([^\#]+)\s*#'
+        input_pattern = r'\[([^\]]+)\]'
+
+        def dropdown_repl(match):
+            nonlocal question_counter
+            options_str = match.group(1)
+            correct_answer = match.group(2).strip()
+            options = [opt.strip() for opt in options_str.split(',')]
+            qid = f'q{question_counter}'
+            correct_answers[qid] = correct_answer
+            question_counter += 1
+
+            select_class = 'custom-select'
+            user_answer = request.form.get(qid, '').strip().lower() if request.method == 'POST' else ''
+            
+            # Check if user's answer is correct
+            if user_answer == correct_answer.lower():
+                user_correct[qid] = True
+                select_class += ' correct'
+            else:
+                user_correct[qid] = False
+
+            select_html = f'<select name="{qid}" class="{select_class}">'
+            for option in options:
+                selected = 'selected' if request.method == 'POST' and user_answer == option.strip().lower() else ''
+                select_html += f'<option value="{option}" {selected}>{option}</option>'
+            select_html += '</select>'
+
+            return select_html
+
+        def input_repl(match):
+            nonlocal question_counter
+            correct_answer = match.group(1).strip()
+            qid = f'q{question_counter}'
+            correct_answers[qid] = correct_answer
+            question_counter += 1
+
+            user_answer = request.form.get(qid, '').strip().lower() if request.method == 'POST' else ''
+            input_class = 'form-control'
+
+            # Check if user's answer is correct
+            if user_answer == correct_answer.lower():
+                user_correct[qid] = True
+                input_class += ' correct'
+            else:
+                user_correct[qid] = False
+
+            input_html = f'<input type="text" name="{qid}" value="{user_answer}" class="{input_class}">'
+
+            return input_html
+
+        # Process the line
+        line = re.sub(dropdown_pattern, dropdown_repl, line)
+        line = re.sub(input_pattern, input_repl, line)
+        return line
+
+    # Process each line in test content
+    for line in test_content.splitlines():
+        processed_line = replace_answers(line)
+        processed_content.append(processed_line)
+
+    if request.method == 'POST':
+        # Check if all answers are correct
+        all_correct = all(user_correct.values())
+        if all_correct:
+            flash('You have answered everything correctly! You can now proceed.', 'success')
+        else:
+            flash('Some answers are incorrect or missing. Please try again.', 'danger')
+
+    return render_template(
+        'learn_test.html',
+        test_name=test.name,
+        processed_content=processed_content
+    )
+
+
+
 
 
 @app.route('/autocomplete_search')
