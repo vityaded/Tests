@@ -1,58 +1,78 @@
-
 {% extends "base.html" %}
 
-{% block title %}Take Test - {{ test.name }}{% endblock %}
+{% block title %}Learn Test - {{ test_name }}{% endblock %}
 
 {% block content %}
-  <h1 class="my-4">{{ test.name }}</h1>
-
-  {% if time_limit %}
-    <div class="alert alert-info" id="timer">
-      Time Remaining: <span id="time">Loading...</span>
-    </div>
-  {% endif %}
+  <h1 class="my-4">{{ test_name }}</h1>
 
   <form method="post">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token }}"/>
-   
-    
-    {% for line in processed_content %}
-      <p>{{ line | safe }}</p>
-    {% endfor %}
-    <button type="submit" class="btn btn-primary">Submit Test</button>
-</form>
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
 
-  {% if score is not none %}
-    <h2 class="my-4">Your Score: {{ score }} / {{ total }}</h2>
-  {% endif %}
+    <div id="test-content">
+      {% for line in processed_content %}
+        <p>{{ line | safe }}</p> <!-- Initially display raw content -->
+      {% endfor %}
+    </div>
 
-  <a href="{{ url_for('index') }}" class="btn btn-link">Back to Home</a>
+    <button type="submit" class="btn btn-primary">Check Answers</button>
+  </form>
+
+  <!-- Translation and pronunciation area -->
+  <div id="translation-container" class="mt-4">
+    <h5>Selected Word:</h5>
+    <p id="translated-word" class="font-weight-bold"></p>
+    <button id="hear-pronunciation" class="btn btn-secondary" style="display: none;">
+      <i class="fas fa-volume-up"></i> Hear Pronunciation
+    </button>
+  </div>
+  
 {% endblock %}
 
 {% block scripts %}
   {{ super() }}
-  {% if time_limit %}
+
   <script>
-    var timeLimit = {{ time_limit|default('null')|tojson }};
-    if (timeLimit !== null) {
-      var endTime = new Date().getTime() + timeLimit * 60 * 1000;
-      var x = setInterval(function() {
-        var now = new Date().getTime();
-        var distance = endTime - now;
-
-        var minutes = Math.floor((distance % (1000 * 60 * 60)) / (1000 * 60));
-        var seconds = Math.floor((distance % (1000 * 60)) / 1000);
-
-        document.getElementById("time").innerHTML = minutes + "m " + seconds + "s ";
-
-        if (distance <= 0) {
-          clearInterval(x);
-          document.querySelector("form").submit();
-        }
-      }, 1000);
-    } else {
-      document.getElementById("timer").style.display = 'none';
+    // Function to split content into words and make them clickable
+    function splitIntoWords() {
+      const paragraphs = document.querySelectorAll("#test-content p");
+      paragraphs.forEach(paragraph => {
+        const words = paragraph.innerText.split(" "); // Split into words
+        const newHTML = words.map(word => `<span class="word" style="cursor: pointer;">${word}</span>`).join(" ");
+        paragraph.innerHTML = newHTML; // Replace the paragraph's content
+      });
     }
+
+    // Function to handle word selection and translation
+    function translateAndPronounce(word) {
+      fetch(`/translate?word=${encodeURIComponent(word)}`)
+        .then(response => response.json())
+        .then(data => {
+          document.getElementById('translated-word').textContent = `${word} - ${data.translation}`;
+          const pronunciationBtn = document.getElementById('hear-pronunciation');
+          if (data.pronunciation_url) {
+            pronunciationBtn.style.display = 'inline-block';
+            pronunciationBtn.onclick = function() {
+              const audio = new Audio(data.pronunciation_url);
+              audio.play();
+            };
+          } else {
+            pronunciationBtn.style.display = 'none';
+          }
+        })
+        .catch(error => console.error('Error:', error));
+    }
+
+    // Call the split function once the page is loaded
+    window.onload = function() {
+      splitIntoWords(); // Split all test content into words
+
+      // Add event listener to each word element
+      document.querySelectorAll('.word').forEach(function(element) {
+        element.addEventListener('click', function() {
+          const word = this.textContent.trim();
+          translateAndPronounce(word); // Call the function to translate and play pronunciation
+        });
+      });
+    };
   </script>
-  {% endif %}
 {% endblock %}

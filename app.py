@@ -1,12 +1,14 @@
 import os
 import uuid
 import re
+import requests
 from datetime import datetime, timezone
-from functools import wraps
+from functools import wraps 
+
 
 from flask import (
     Flask, render_template, request, redirect, url_for,
-    flash, abort, session, jsonify
+    flash, abort, session, jsonify, Response
 )
 from flask_sqlalchemy import SQLAlchemy
 from flask_login import (
@@ -125,6 +127,55 @@ class TestResult(db.Model):
     timestamp = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
     test_id = db.Column(db.Integer, db.ForeignKey('test.id'), nullable=False)
+
+@app.route('/tts')
+def tts():
+    text = request.args.get('text')
+    language = request.args.get('lang', 'en')
+
+    # Make the request to Google TTS API
+    tts_url = f'https://translate.google.com/translate_tts?ie=UTF-8&tl={language}&client=gtx&q={text}'
+    headers = {'User-Agent': 'Mozilla/5.0'}  # Required to mimic browser request
+    response = requests.get(tts_url, headers=headers)
+
+    # Return the audio response
+    return Response(response.content, mimetype='audio/mpeg')
+
+@app.route('/translate')
+def translate_word():
+    word = request.args.get('word')
+    source_lang = 'en'
+    target_lang = 'uk'
+
+    if not word:
+        return jsonify({'error': 'No word provided for translation'}), 400
+
+    # Construct the translation URL for Google Translate
+    translate_url = (
+        f'https://translate.googleapis.com/translate_a/single?client=gtx&sl={source_lang}&tl={target_lang}&dt=t&q={word}'
+    )
+
+    try:
+        # Make the request to the Google Translate API
+        response = requests.get(translate_url)
+        response.raise_for_status()
+
+        translation_data = response.json()
+
+        if translation_data and isinstance(translation_data, list) and len(translation_data) > 0:
+            translation = translation_data[0][0][0]
+            pronunciation_url = f'https://translate.google.com/translate_tts?ie=UTF-8&tl={source_lang}&client=gtx&q={word}'
+
+            return jsonify({
+                'translation': translation,
+                'pronunciation_url': pronunciation_url
+            })
+        else:
+            return jsonify({'error': 'Unexpected translation response format'}), 500
+
+    except requests.RequestException as e:
+        return jsonify({'error': f'Translation API request failed: {str(e)}'}), 500
+
 
 # Error handler for 403 Forbidden
 @app.errorhandler(403)
@@ -509,12 +560,15 @@ def learn_test(test_id):
             select_class = 'custom-select'
             user_answer = request.form.get(qid, '').strip().lower() if request.method == 'POST' else ''
 
-            if user_answer == correct_answer.lower():
+            # Mark correct/incorrect answers
+            if user_answer == correct_answer.lower() and user_answer != '':
                 user_correct[qid] = True
-                select_class += ' correct'
-            else:
+                select_class += ' correct'  # Add a 'correct' class
+            elif user_answer != '':
                 user_correct[qid] = False
+                select_class += ' incorrect'  # Add an 'incorrect' class
 
+            # Build dropdown HTML
             select_html = f'<select name="{qid}" class="{select_class}">'
             for option in options:
                 selected = 'selected' if request.method == 'POST' and user_answer == option.strip().lower() else ''
@@ -533,26 +587,32 @@ def learn_test(test_id):
             user_answer = request.form.get(qid, '').strip().lower() if request.method == 'POST' else ''
             input_class = 'form-control'
 
-            if user_answer == correct_answer.lower():
+            # Mark correct/incorrect answers
+            if user_answer == correct_answer.lower() and user_answer != '':
                 user_correct[qid] = True
-                input_class += ' correct'
-            else:
+                input_class += ' correct'  # Add a 'correct' class
+            elif user_answer != '':
                 user_correct[qid] = False
+                input_class += ' incorrect'  # Add an 'incorrect' class
 
             input_html = f'<input type="text" name="{qid}" value="{user_answer}" class="{input_class}">'
 
             return input_html
 
+        # Replace answers in the content
         line = re.sub(dropdown_pattern, dropdown_repl, line)
         line = re.sub(input_pattern, input_repl, line)
         return line
 
+    # Process each line in the test content
     for line in test_content.splitlines():
         processed_line = replace_answers(line)
         processed_content.append(processed_line)
 
     if request.method == 'POST':
+        # Check if all answers are correct
         all_correct = all(user_correct.values())
+
         if all_correct:
             # Save the completion result to the database
             learn_test_result = LearnTestResult.query.filter_by(user_id=current_user.id, test_id=test.id).first()
