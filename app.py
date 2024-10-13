@@ -451,6 +451,24 @@ def take_test(test_id):
             time_limit=time_limit
         )
 
+@app.route('/search')
+def search():
+    query = request.args.get('query', '').strip()
+    search_option = request.args.get('search_option', 'books')
+
+    if not query:
+        flash('Please enter a search term.', 'warning')
+        return redirect(url_for('index'))
+
+    if search_option == 'books':
+        # Search for books by title
+        books = Book.query.filter(Book.title.ilike(f'%{query}%')).all()
+        return render_template('search_results.html', books=books, query=query, search_option=search_option)
+    else:
+        # Search for tests by name
+        tests = Test.query.filter(Test.name.ilike(f'%{query}%')).all()
+        return render_template('search_results.html', tests=tests, query=query, search_option=search_option)
+
 
 # Route: Admin Panel
 @app.route('/admin')
