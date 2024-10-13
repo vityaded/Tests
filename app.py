@@ -85,6 +85,19 @@ class User(UserMixin, db.Model):
     def check_password(self, password):
         return check_password_hash(self.password, password)
 
+
+
+class LearnTestResult(db.Model):
+    __tablename__ = 'learn_test_result'
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    test_id = db.Column(db.Integer, db.ForeignKey('test.id'), nullable=False)
+    completed_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
+
+    user = db.relationship('User', backref='learn_test_results')
+    test = db.relationship('Test', backref='learn_test_results')
+
+
 # Define the Book model
 class Book(db.Model):
     __tablename__ = 'book'  # Explicitly specify table name
@@ -479,7 +492,6 @@ def learn_test(test_id):
     question_counter = 1
     user_correct = {}
 
-    # Function to replace answers with input fields or dropdowns
     def replace_answers(line):
         nonlocal question_counter
         dropdown_pattern = r'#\s*\[([^\]]+)\]\s*([^\#]+)\s*#'
@@ -496,8 +508,7 @@ def learn_test(test_id):
 
             select_class = 'custom-select'
             user_answer = request.form.get(qid, '').strip().lower() if request.method == 'POST' else ''
-            
-            # Check if user's answer is correct
+
             if user_answer == correct_answer.lower():
                 user_correct[qid] = True
                 select_class += ' correct'
@@ -522,7 +533,6 @@ def learn_test(test_id):
             user_answer = request.form.get(qid, '').strip().lower() if request.method == 'POST' else ''
             input_class = 'form-control'
 
-            # Check if user's answer is correct
             if user_answer == correct_answer.lower():
                 user_correct[qid] = True
                 input_class += ' correct'
@@ -533,21 +543,28 @@ def learn_test(test_id):
 
             return input_html
 
-        # Process the line
         line = re.sub(dropdown_pattern, dropdown_repl, line)
         line = re.sub(input_pattern, input_repl, line)
         return line
 
-    # Process each line in test content
     for line in test_content.splitlines():
         processed_line = replace_answers(line)
         processed_content.append(processed_line)
 
     if request.method == 'POST':
-        # Check if all answers are correct
         all_correct = all(user_correct.values())
         if all_correct:
-            flash('You have answered everything correctly! You can now proceed.', 'success')
+            # Save the completion result to the database
+            learn_test_result = LearnTestResult.query.filter_by(user_id=current_user.id, test_id=test.id).first()
+            if not learn_test_result:
+                learn_test_result = LearnTestResult(
+                    user_id=current_user.id,
+                    test_id=test.id
+                )
+                db.session.add(learn_test_result)
+                db.session.commit()
+
+            flash('You have answered everything correctly! Your progress has been saved.', 'success')
         else:
             flash('Some answers are incorrect or missing. Please try again.', 'danger')
 
@@ -583,11 +600,16 @@ def autocomplete_search():
 
 # Route: Admin Panel
 @app.route('/admin')
+@app.route('/admin')
 @admin_required
 def admin_panel():
-    # Get all test results
     test_results = TestResult.query.order_by(TestResult.timestamp.desc()).all()
-    return render_template('admin_panel.html', test_results=test_results)
+    learn_test_results = LearnTestResult.query.order_by(LearnTestResult.completed_at.desc()).all()
+    return render_template(
+        'admin_panel.html', 
+        test_results=test_results,
+        learn_test_results=learn_test_results
+    )
 
 # Run the Flask app
 if __name__ == '__main__':
