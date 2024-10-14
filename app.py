@@ -543,6 +543,7 @@ def learn_test(test_id):
     question_counter = 1
     user_correct = {}
 
+    # Function to replace answers with input fields or dropdowns
     def replace_answers(line):
         nonlocal question_counter
         dropdown_pattern = r'#\s*\[([^\]]+)\]\s*([^\#]+)\s*#'
@@ -559,16 +560,14 @@ def learn_test(test_id):
 
             select_class = 'custom-select'
             user_answer = request.form.get(qid, '').strip().lower() if request.method == 'POST' else ''
-
-            # Mark correct/incorrect answers
-            if user_answer == correct_answer.lower() and user_answer != '':
+            
+            # Check if user's answer is correct
+            if user_answer == correct_answer.lower():
                 user_correct[qid] = True
-                select_class += ' correct'  # Add a 'correct' class
-            elif user_answer != '':
+                select_class += ' correct'
+            else:
                 user_correct[qid] = False
-                select_class += ' incorrect'  # Add an 'incorrect' class
 
-            # Build dropdown HTML
             select_html = f'<select name="{qid}" class="{select_class}">'
             for option in options:
                 selected = 'selected' if request.method == 'POST' and user_answer == option.strip().lower() else ''
@@ -587,24 +586,23 @@ def learn_test(test_id):
             user_answer = request.form.get(qid, '').strip().lower() if request.method == 'POST' else ''
             input_class = 'form-control'
 
-            # Mark correct/incorrect answers
-            if user_answer == correct_answer.lower() and user_answer != '':
+            # Check if user's answer is correct
+            if user_answer == correct_answer.lower():
                 user_correct[qid] = True
-                input_class += ' correct'  # Add a 'correct' class
-            elif user_answer != '':
+                input_class += ' correct'
+            else:
                 user_correct[qid] = False
-                input_class += ' incorrect'  # Add an 'incorrect' class
 
             input_html = f'<input type="text" name="{qid}" value="{user_answer}" class="{input_class}">'
 
             return input_html
 
-        # Replace answers in the content
+        # Process the line
         line = re.sub(dropdown_pattern, dropdown_repl, line)
         line = re.sub(input_pattern, input_repl, line)
         return line
 
-    # Process each line in the test content
+    # Process each line in test content
     for line in test_content.splitlines():
         processed_line = replace_answers(line)
         processed_content.append(processed_line)
@@ -612,19 +610,8 @@ def learn_test(test_id):
     if request.method == 'POST':
         # Check if all answers are correct
         all_correct = all(user_correct.values())
-
         if all_correct:
-            # Save the completion result to the database
-            learn_test_result = LearnTestResult.query.filter_by(user_id=current_user.id, test_id=test.id).first()
-            if not learn_test_result:
-                learn_test_result = LearnTestResult(
-                    user_id=current_user.id,
-                    test_id=test.id
-                )
-                db.session.add(learn_test_result)
-                db.session.commit()
-
-            flash('You have answered everything correctly! Your progress has been saved.', 'success')
+            flash('You have answered everything correctly! You can now proceed.', 'success')
         else:
             flash('Some answers are incorrect or missing. Please try again.', 'danger')
 
@@ -633,6 +620,9 @@ def learn_test(test_id):
         test_name=test.name,
         processed_content=processed_content
     )
+
+
+
 
 
 

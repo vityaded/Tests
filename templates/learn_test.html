@@ -9,21 +9,20 @@
   <form method="post">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}"/>
 
-    {% for line in processed_content %}
-      <p class="line-content">
-        {{ line | safe }} 
-      </p>
-    {% endfor %}
+    <!-- Render the test content -->
+    <div id="test-content">
+      {% for line in processed_content %}
+        <p class="line-content">{{ line | safe }}</p>
+      {% endfor %}
+    </div>
 
     <button type="submit" class="btn btn-primary">Check Answers</button>
   </form>
 
-  <!-- Translation and pronunciation area -->
-  <div id="translation-popup" class="mt-4" style="display: none;">
-    <p id="translated-word" class="font-weight-bold"></p>
-    <button id="hear-pronunciation" class="btn btn-secondary">
-      <i class="fas fa-volume-up"></i>
-    </button>
+  <!-- Translation and pronunciation section -->
+  <div id="translation-popup" style="display: none; position: absolute; background: #f9f9f9; border: 1px solid #ccc; padding: 10px; z-index: 1000;">
+    <i class="fas fa-volume-up" id="hear-pronunciation" style="cursor: pointer; margin-right: 5px;"></i>
+    <span id="translated-word" class="font-weight-bold"></span>
   </div>
 
 {% endblock %}
@@ -32,22 +31,57 @@
   {{ super() }}
 
   <script>
-    // Function to handle word selection and translation
+    // Function to wrap text nodes in a <span>
+    function wrapTextNodes(element) {
+      const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT, null, false);
+      let node;
+      const nodes = [];
+
+      // Collect all text nodes
+      while (node = walker.nextNode()) {
+        nodes.push(node);
+      }
+
+      nodes.forEach(textNode => {
+        const words = textNode.textContent.split(/\s+/);
+        const fragment = document.createDocumentFragment();
+
+        words.forEach((word, index) => {
+          if (word.trim()) {
+            const span = document.createElement('span');
+            span.textContent = word;
+            span.style.cursor = 'pointer';
+            span.className = 'word';
+            span.onclick = (event) => {
+              translateAndPronounce(word.trim(), event);
+            };
+            fragment.appendChild(span);
+            if (index < words.length - 1) {
+              fragment.appendChild(document.createTextNode(' '));
+            }
+          }
+        });
+
+        textNode.parentNode.replaceChild(fragment, textNode);
+      });
+    }
+
+    // Translation and pronunciation handling
     function translateAndPronounce(word, event) {
       fetch(`/translate?word=${encodeURIComponent(word)}`)
         .then(response => response.json())
         .then(data => {
-          // Display translation in the popup
-          document.getElementById('translated-word').textContent = `${word} - ${data.translation}`;
-
-          // Set the position of the popup near the clicked word
+          // Show the translation near the word
           const popup = document.getElementById('translation-popup');
+          const translatedText = document.getElementById('translated-word');
+          translatedText.textContent = `${word} - ${data.translation}`;
+          
+          // Position the popup next to the clicked word
           popup.style.display = 'block';
-          popup.style.position = 'absolute';
-          popup.style.top = `${event.pageY}px`;
           popup.style.left = `${event.pageX}px`;
+          popup.style.top = `${event.pageY}px`;
 
-          // Play pronunciation
+          // Show pronunciation button
           const pronunciationBtn = document.getElementById('hear-pronunciation');
           pronunciationBtn.onclick = function() {
             const audio = new Audio(`/tts?text=${encodeURIComponent(word)}&lang=en`);
@@ -57,41 +91,18 @@
         .catch(error => console.error('Error:', error));
     }
 
-    // Function to make words clickable
-    function makeWordsClickable() {
-      document.querySelectorAll('.line-content').forEach(function(paragraph) {
-        let html = paragraph.innerHTML;
+    // Once the document is loaded, wrap words in the content
+    document.addEventListener('DOMContentLoaded', function() {
+      const content = document.getElementById('test-content');
+      wrapTextNodes(content);
+    });
 
-        // Split text by <input> tags and handle words separately
-        const textSegments = html.split(/(<input.*?>)/g);
-        paragraph.innerHTML = '';  // Clear the paragraph content
-
-        textSegments.forEach(segment => {
-          if (segment.startsWith('<input')) {
-            // If it's an input, add it directly
-            paragraph.innerHTML += segment;
-          } else {
-            // Split the text into words and make them clickable
-            const words = segment.split(/\s+/);
-            words.forEach(word => {
-              if (word.trim()) {
-                const span = document.createElement('span');
-                span.textContent = word;
-                span.style.cursor = 'pointer';
-                span.className = 'word';
-                span.onclick = function(event) {
-                  translateAndPronounce(word.trim(), event);
-                };
-                paragraph.appendChild(span);
-                paragraph.appendChild(document.createTextNode(' '));  // Add space after each word
-              }
-            });
-          }
-        });
-      });
-    }
-
-    // Make words clickable when the page is ready
-    document.addEventListener('DOMContentLoaded', makeWordsClickable);
+    // Close popup when clicking outside
+    document.addEventListener('click', function(event) {
+      const popup = document.getElementById('translation-popup');
+      if (!popup.contains(event.target)) {
+        popup.style.display = 'none';
+      }
+    });
   </script>
 {% endblock %}
