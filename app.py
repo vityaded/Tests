@@ -92,6 +92,35 @@ def first_review():
     random.shuffle(options)
 
     return render_template('first_review.html', word=selected_word.word, options=options, correct_translation=correct_translation)
+
+@app.route('/review/second')
+@login_required
+def second_review():
+    # Get the user's vocabulary
+    vocab_words = Vocabulary.query.filter_by(user_id=current_user.id).all()
+
+    if not vocab_words:
+        return jsonify({'error': 'No vocabulary words found'}), 404
+
+    # Randomly select one word
+    selected_word = random.choice(vocab_words)
+
+    # Get the correct English word
+    correct_word = selected_word.word
+
+    # Fetch 3 incorrect English words from other words
+    other_words = [word.word for word in vocab_words if word.id != selected_word.id]
+    if len(other_words) < 3:
+        return jsonify({'error': 'Not enough vocabulary words to generate options'}), 400
+    incorrect_options = random.sample(other_words, 3)
+
+    # Combine correct and incorrect options and shuffle them
+    options = incorrect_options + [correct_word]
+    random.shuffle(options)
+
+    return render_template('second_review.html', word=selected_word.translation, options=options, correct_word=correct_word)
+
+
 # User loader callback
 @login_manager.user_loader
 def load_user(user_id):
@@ -268,6 +297,38 @@ def book_tests(book_id):
     book = Book.query.get_or_404(book_id)
     tests = Test.query.filter_by(book_id=book.id).all()  # Fetch all tests for the specific book
     return render_template('book_tests.html', book=book, tests=tests)
+
+@app.route('/review/third')
+@login_required
+def third_review():
+    # Get the user's vocabulary
+    vocab_words = Vocabulary.query.filter_by(user_id=current_user.id).all()
+
+    if not vocab_words:
+        return jsonify({'error': 'No vocabulary words found'}), 404
+
+    # Randomly select one word
+    selected_word = random.choice(vocab_words)
+
+    # Get the correct English word and scramble it
+    correct_word = selected_word.word
+    scrambled_word = ''.join(random.sample(correct_word, len(correct_word)))
+
+    return render_template('third_review.html', word=selected_word.translation, scrambled_word=scrambled_word, correct_word=correct_word)
+
+@app.route('/review/fourth')
+@login_required
+def fourth_review():
+    # Get the user's vocabulary
+    vocab_words = Vocabulary.query.filter_by(user_id=current_user.id).all()
+
+    if not vocab_words:
+        return jsonify({'error': 'No vocabulary words found'}), 404
+
+    # Randomly select one word from the vocabulary
+    selected_word = random.choice(vocab_words)
+
+    return render_template('fourth_review.html', word=selected_word.translation, correct_word=selected_word.word)
 
 # Route: Sign Up
 @app.route('/signup', methods=['GET', 'POST'])

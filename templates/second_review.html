@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+
+{% block title %}Second Review{% endblock %}
+
+{% block content %}
+  <h1 class="my-4">Second Review</h1>
+
+  <p><strong>Translate the following word:</strong> {{ word }}</p>
+
+  <form id="review-form">
+    {% for option in options %}
+      <div class="form-check">
+        <input class="form-check-input" type="radio" name="answer" value="{{ option }}" id="{{ option }}">
+        <label class="form-check-label" for="{{ option }}">
+          {{ option }}
+        </label>
+      </div>
+    {% endfor %}
+
+    <button type="submit" class="btn btn-primary mt-3">Submit</button>
+  </form>
+
+  <div id="result" class="mt-3"></div>
+{% endblock %}
+
+{% block scripts %}
+  <script>
+    document.getElementById('review-form').addEventListener('submit', function(event) {
+      event.preventDefault();
+      const selectedOption = document.querySelector('input[name="answer"]:checked').value;
+      const correctAnswer = "{{ correct_word }}";
+
+      let resultText;
+      if (selectedOption === correctAnswer) {
+        resultText = "<span class='text-success'>Correct!</span>";
+      } else {
+        resultText = `<span class='text-danger'>Incorrect! The correct answer was: {{ correct_word }}</span>`;
+      }
+
+      document.getElementById('result').innerHTML = resultText;
+    });
+  </script>
+{% endblock %}
