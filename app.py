@@ -1,6 +1,7 @@
 import os
 import uuid
 import re
+import random
 import requests
 from datetime import datetime, timezone
 from functools import wraps 
@@ -65,7 +66,32 @@ migrate = Migrate(app, db)
 login_manager = LoginManager()
 login_manager.init_app(app)
 login_manager.login_view = 'login'
+@app.route('/review/first')
+@login_required
+def first_review():
+    # Get the user's vocabulary
+    vocab_words = Vocabulary.query.filter_by(user_id=current_user.id).all()
 
+    if not vocab_words:
+        return jsonify({'error': 'No vocabulary words found'}), 404
+
+    # Randomly select one word
+    selected_word = random.choice(vocab_words)
+
+    # Get the correct translation
+    correct_translation = selected_word.translation
+
+    # Fetch 3 incorrect translations from other words
+    other_words = [word.translation for word in vocab_words if word.id != selected_word.id]
+    if len(other_words) < 3:
+        return jsonify({'error': 'Not enough vocabulary words to generate options'}), 400
+    incorrect_options = random.sample(other_words, 3)
+
+    # Combine correct and incorrect options and shuffle them
+    options = incorrect_options + [correct_translation]
+    random.shuffle(options)
+
+    return render_template('first_review.html', word=selected_word.word, options=options, correct_translation=correct_translation)
 # User loader callback
 @login_manager.user_loader
 def load_user(user_id):
