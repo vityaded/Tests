@@ -1,0 +1,33 @@
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css">
+{% extends "base.html" %}
+
+{% block title %}My Vocabulary{% endblock %}
+
+{% block content %}
+  <h1 class="my-4">My Vocabulary</h1>
+  <ul>
+    {% for vocab in vocab_words %}
+      <li>
+        <strong>{{ vocab.word }}:</strong> {{ vocab.translation }}
+
+        <!-- Generate pronunciation dynamically using TTS -->
+        <button class="btn btn-secondary" onclick="playPronunciation('{{ vocab.word }}')">
+          <i class="fas fa-volume-up"></i>
+        </button>
+      </li>
+    {% else %}
+      <p>No words in your vocabulary yet.</p>
+    {% endfor %}
+  </ul>
+{% endblock %}
+
+{% block scripts %}
+  <script>
+    // Function to fetch and play pronunciation using dynamic TTS URL
+    function playPronunciation(word) {
+      const ttsUrl = `/tts?text=${encodeURIComponent(word)}&lang=en`;
+      const audio = new Audio(ttsUrl);
+      audio.play();
+    }
+  </script>
+{% endblock %}

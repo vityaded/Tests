@@ -25,6 +25,9 @@
           <li class="nav-item">
             <a class="nav-link" href="{{ url_for('learn_test', test_id=1) }}">Learn</a> <!-- Example: Adjust test_id accordingly -->
           </li>
+          <li class="nav-item">
+            <a class="nav-link" href="{{ url_for('my_vocabulary') }}">Vocabulary</a> <!-- New Vocabulary link -->
+          </li>
           {% if current_user.is_admin %}
             <li class="nav-item">
               <a class="nav-link" href="{{ url_for('admin_panel') }}">Admin Panel</a>

@@ -80,6 +80,9 @@ class User(UserMixin, db.Model):
     is_admin = db.Column(db.Boolean, default=False)
     test_results = db.relationship('TestResult', backref='user', lazy=True)
     tests_created = db.relationship('Test', backref='creator', lazy=True)
+    
+    # Add the vocabulary relationship
+    vocabulary = db.relationship('Vocabulary', backref='user', lazy=True)
 
     def set_password(self, password):
         self.password = generate_password_hash(password)
@@ -87,6 +90,13 @@ class User(UserMixin, db.Model):
     def check_password(self, password):
         return check_password_hash(self.password, password)
 
+class Vocabulary(db.Model):
+    __tablename__ = 'vocabulary'
+    id = db.Column(db.Integer, primary_key=True)
+    word = db.Column(db.String(100), nullable=False)
+    translation = db.Column(db.String(200), nullable=False)
+    pronunciation_url = db.Column(db.String(300))  # Store pronunciation URL if necessary
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
 
 
 class LearnTestResult(db.Model):
@@ -622,10 +632,33 @@ def learn_test(test_id):
     )
 
 
+@app.route('/my_vocabulary')
+@login_required
+def my_vocabulary():
+    vocab_words = Vocabulary.query.filter_by(user_id=current_user.id).all()
+    return render_template('vocabulary.html', vocab_words=vocab_words)
 
 
+@app.route('/add_to_vocabulary', methods=['POST'])
+@login_required
+def add_to_vocabulary():
+    data = request.get_json()
+    word = data.get('word')
+    translation = data.get('translation')
 
+    # Ensure that word and translation are not None or empty
+    if not word or not translation:
+        return jsonify({'success': False, 'error': 'Invalid data: word or translation is missing'}), 400
 
+    try:
+        # Add word to user's vocabulary
+        new_vocab = Vocabulary(word=word, translation=translation, user_id=current_user.id)
+        db.session.add(new_vocab)
+        db.session.commit()
+        return jsonify({'success': True})
+
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 
 @app.route('/autocomplete_search')
