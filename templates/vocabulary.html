@@ -5,21 +5,26 @@
 
 {% block content %}
   <h1 class="my-4">My Vocabulary</h1>
-  <ul>
-    {% for vocab in vocab_words %}
-      <li>
-        <strong>{{ vocab.word }}:</strong> {{ vocab.translation }}
 
-        <!-- Generate pronunciation dynamically using TTS -->
-        <button class="btn btn-secondary" onclick="playPronunciation('{{ vocab.word }}')">
-          <i class="fas fa-volume-up"></i>
-        </button>
-      </li>
-    {% else %}
-      <p>No words in your vocabulary yet.</p>
-    {% endfor %}
-  </ul>
+  {% if vocab_words %}
+    <ul>
+      {% for vocab in vocab_words %}
+        <li>
+          <strong>{{ vocab.word }}:</strong> {{ vocab.translation }}
+          <!-- Pronunciation button as before -->
+          <button class="btn btn-secondary" onclick="playPronunciation('{{ vocab.word }}')">
+            <i class="fas fa-volume-up"></i>
+          </button>
+        </li>
+      {% endfor %}
+    </ul>
+    <!-- Add the Learn button -->
+    <a href="{{ url_for('review') }}" class="btn btn-primary">Learn</a>
+  {% else %}
+    <p>No words in your vocabulary yet.</p>
+  {% endif %}
 {% endblock %}
+
 
 {% block scripts %}
   <script>

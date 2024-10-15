@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+
+{% block title %}Review Due Words{% endblock %}
+
+{% block content %}
+  <h1 class="my-4">Words Due for Review</h1>
+
+  {% if due_words %}
+    <ul>
+      {% for word in due_words %}
+        <li>
+          <strong>{{ word.translation }}</strong> ({{ word.word }}) 
+          <form action="{{ url_for('process_fourth_review') }}" method="POST">
+            <input type="hidden" name="word_id" value="{{ word.id }}">
+            <input type="text" name="translation" placeholder="Enter the English word" required>
+            <button type="submit" class="btn btn-sm btn-primary">Review</button>
+          </form>
+        </li>
+      {% endfor %}
+    </ul>
+  {% else %}
+    <p>No words due for review today!</p>
+  {% endif %}
+{% endblock %}

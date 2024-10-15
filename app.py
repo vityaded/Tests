@@ -3,7 +3,7 @@ import uuid
 import re
 import random
 import requests
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from functools import wraps 
 
 
@@ -145,14 +145,249 @@ class User(UserMixin, db.Model):
     def check_password(self, password):
         return check_password_hash(self.password, password)
 
-class Vocabulary(db.Model):
-    __tablename__ = 'vocabulary'
-    id = db.Column(db.Integer, primary_key=True)
-    word = db.Column(db.String(100), nullable=False)
-    translation = db.Column(db.String(200), nullable=False)
-    pronunciation_url = db.Column(db.String(300))  # Store pronunciation URL if necessary
-    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+from datetime import datetime
 
+class Vocabulary(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    word = db.Column(db.String(150), nullable=False)
+    translation = db.Column(db.String(150), nullable=False)
+    pronunciation_url = db.Column(db.String(200), nullable=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    next_review = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    review_stage = db.Column(db.Integer, nullable=False, default=1)
+
+
+
+from datetime import datetime, timedelta
+
+from flask import request, render_template, redirect, url_for, flash, session
+from flask_login import login_required, current_user
+from datetime import datetime, timedelta
+import random
+import unicodedata
+
+def normalize_text(text):
+    # Normalize the text to decompose combined letters (e.g., é to e + ́)
+    text = unicodedata.normalize('NFKD', text)
+    # Filter out non-letter characters
+    text = ''.join([c for c in text if c.isalpha()])
+    # Convert to lowercase
+    return text.lower()
+
+@app.route('/review', methods=['GET', 'POST'])
+@login_required
+def review():
+    # Fetch all words due for review
+    now = datetime.utcnow()
+    vocab_due = Vocabulary.query.filter_by(user_id=current_user.id)\
+        .filter(Vocabulary.next_review <= now)\
+        .order_by(Vocabulary.next_review).all()
+    
+    # Fetch all vocabulary words (needed for generating incorrect options)
+    vocab_words = Vocabulary.query.filter_by(user_id=current_user.id).all()
+    
+    # Determine if we are in practice mode
+    practice_mode = False
+    if not vocab_due:
+        # No words due for review, switch to practice mode
+        if not vocab_words:
+            flash('Your vocabulary is empty. Please add some words first.', 'info')
+            return redirect(url_for('my_vocabulary'))
+        practice_mode = True
+        vocab_list = vocab_words  # Use all words for practice
+    else:
+        vocab_list = vocab_due  # Use words due for review
+    
+    # Use session to keep track of current word index
+    word_index = session.get('word_index', 0)
+    total_words = len(vocab_list)
+    current_word_number = word_index + 1  # Since index starts at 0
+
+    if word_index >= total_words:
+        # Reset session and redirect when done
+        session.pop('word_index', None)
+        if practice_mode:
+            flash('Practice session completed!', 'success')
+        else:
+            flash('Review session completed!', 'success')
+        return redirect(url_for('my_vocabulary'))
+
+    vocab_word = vocab_list[word_index]
+
+    if request.method == 'POST':
+        # Retrieve review_stage from form data
+        review_stage = int(request.form.get('review_stage'))
+        user_answer = request.form.get('answer', '')
+        user_answer = normalize_text(user_answer)
+        success = False
+
+        # Determine the correct answer and process based on review stage
+        if review_stage == 1:
+            correct_answer = normalize_text(vocab_word.translation)
+            if user_answer == correct_answer:
+                success = True
+
+        elif review_stage == 2:
+            correct_answer = normalize_text(vocab_word.word)
+            if user_answer == correct_answer:
+                success = True
+
+        elif review_stage == 3:
+            correct_answer = normalize_text(vocab_word.word)
+            if user_answer == correct_answer:
+                success = True
+
+        else:
+            correct_answer = normalize_text(vocab_word.word)
+            if user_answer == correct_answer:
+                success = True
+
+        if not practice_mode:
+            # Update review_stage and next_review based on whether the answer was correct
+            if success:
+                flash('Correct!', 'success')
+                # Increase review_stage or reset if maximum stage reached
+                if vocab_word.review_stage < 4:
+                    vocab_word.review_stage += 1
+                else:
+                    vocab_word.review_stage = 1  # Reset to stage 1 after completion
+                # Set next review date based on stage (use spaced repetition intervals)
+                intervals = {1: 1, 2: 2, 3: 4, 4: 7}  # Days until next review
+                next_interval = intervals.get(vocab_word.review_stage, 1)
+                vocab_word.next_review = datetime.utcnow() + timedelta(days=next_interval)
+                db.session.commit()
+            else:
+                flash(f'Incorrect! The correct answer was: {vocab_word.translation if review_stage == 1 else vocab_word.word}', 'danger')
+                # Reset to stage 1 on failure
+                vocab_word.review_stage = 1
+                vocab_word.next_review = datetime.utcnow() + timedelta(days=1)
+                db.session.commit()
+        else:
+            # In practice mode, just provide feedback without updating the database
+            if success:
+                flash('Correct!', 'success')
+            else:
+                flash(f'Incorrect! The correct answer was: {vocab_word.translation if review_stage == 1 else vocab_word.word}', 'danger')
+
+        # Move to next word
+        session['word_index'] = word_index + 1
+        return redirect(url_for('review'))
+
+    else:
+        # In practice mode, randomly select a review stage
+        if practice_mode:
+            review_stage = random.randint(1, 4)
+        else:
+            review_stage = vocab_word.review_stage
+
+        # Prepare the question and select the template based on review stage
+        if review_stage == 1:
+            # First review: Multiple-choice translation
+            template = 'first_review.html'
+            question = vocab_word.word
+
+            # Generate options from all vocabulary words
+            other_translations = [word.translation for word in vocab_words if word.id != vocab_word.id]
+            if len(other_translations) >= 3:
+                incorrect_options = random.sample(other_translations, 3)
+            elif len(other_translations) > 0:
+                # Not enough options, repeat existing ones
+                times = 3 // len(other_translations)
+                remainder = 3 % len(other_translations)
+                incorrect_options = other_translations * times + other_translations[:remainder]
+                incorrect_options = incorrect_options[:3]  # Ensure we have exactly 3 options
+            else:
+                # Not enough words to generate incorrect options
+                flash('Not enough vocabulary words to generate options. Please add more words.', 'warning')
+                # Move to next word
+                session['word_index'] = word_index + 1
+                return redirect(url_for('review'))
+
+            options = incorrect_options + [vocab_word.translation]
+            random.shuffle(options)
+
+            return render_template(
+                template,
+                vocab_word=vocab_word,
+                question=question,
+                options=options,
+                total_words=total_words,
+                current_word_number=current_word_number,
+                practice_mode=practice_mode,
+                review_stage=review_stage  # Pass review_stage to the template
+            )
+
+        elif review_stage == 2:
+            # Second review: Multiple-choice word selection
+            template = 'second_review.html'
+            question = vocab_word.translation
+
+            # Generate options from all vocabulary words
+            other_words = [word.word for word in vocab_words if word.id != vocab_word.id]
+            if len(other_words) >= 3:
+                incorrect_options = random.sample(other_words, 3)
+            elif len(other_words) > 0:
+                times = 3 // len(other_words)
+                remainder = 3 % len(other_words)
+                incorrect_options = other_words * times + other_words[:remainder]
+                incorrect_options = incorrect_options[:3]  # Ensure we have exactly 3 options
+            else:
+                # Not enough words to generate incorrect options
+                flash('Not enough vocabulary words to generate options. Please add more words.', 'warning')
+                # Move to next word
+                session['word_index'] = word_index + 1
+                return redirect(url_for('review'))
+
+            options = incorrect_options + [vocab_word.word]
+            random.shuffle(options)
+
+            return render_template(
+                template,
+                vocab_word=vocab_word,
+                question=question,
+                options=options,
+                total_words=total_words,
+                current_word_number=current_word_number,
+                practice_mode=practice_mode,
+                review_stage=review_stage  # Pass review_stage to the template
+            )
+
+        elif review_stage == 3:
+            # Third review: Scrambled word exercise
+            template = 'third_review.html'
+            question = vocab_word.translation
+            correct_word = vocab_word.word
+            scrambled_word = ''.join(random.sample(correct_word, len(correct_word)))
+            # Ensure the scrambled word is not the same as the correct word
+            while scrambled_word == correct_word:
+                scrambled_word = ''.join(random.sample(correct_word, len(correct_word)))
+
+
+            return render_template(
+                template,
+                vocab_word=vocab_word,
+                question=question,
+                scrambled_word=scrambled_word,
+                total_words=total_words,
+                current_word_number=current_word_number,
+                practice_mode=practice_mode,
+                review_stage=review_stage  # Include this line
+            )
+
+        else:
+            # Fourth review: Typing the word exercise
+            template = 'fourth_review.html'
+            question = vocab_word.translation
+
+            return render_template(
+                template,
+                vocab_word=vocab_word,
+                question=question,
+                total_words=total_words,
+                current_word_number=current_word_number,
+                practice_mode=practice_mode,
+                review_stage=review_stage  # Include this line
+            )
 
 class LearnTestResult(db.Model):
     __tablename__ = 'learn_test_result'
@@ -316,19 +551,39 @@ def third_review():
 
     return render_template('third_review.html', word=selected_word.translation, scrambled_word=scrambled_word, correct_word=correct_word)
 
-@app.route('/review/fourth')
+@app.route('/review/fourth', methods=['POST'])
 @login_required
-def fourth_review():
-    # Get the user's vocabulary
-    vocab_words = Vocabulary.query.filter_by(user_id=current_user.id).all()
+def process_fourth_review():
+    word_id = request.form.get('word_id')
+    user_answer = request.form.get('translation').strip().lower()
 
-    if not vocab_words:
-        return jsonify({'error': 'No vocabulary words found'}), 404
+    vocab_word = Vocabulary.query.filter_by(id=word_id, user_id=current_user.id).first()
+    if not vocab_word:
+        return jsonify({'error': 'Word not found'}), 404
 
-    # Randomly select one word from the vocabulary
-    selected_word = random.choice(vocab_words)
+    correct_answer = vocab_word.word.lower()
+    if user_answer == correct_answer:
+        # Correct answer: Increase the interval
+        vocab_word.review_interval = min(vocab_word.review_interval * 2, 30)  # Double the interval, max 30 days
+        vocab_word.next_review = datetime.utcnow() + timedelta(days=vocab_word.review_interval)
+        db.session.commit()
+        return jsonify({'success': True, 'message': 'Correct! Your next review is in {} days.'.format(vocab_word.review_interval)})
+    else:
+        # Incorrect answer: Reset interval to 1 day
+        vocab_word.review_interval = 1
+        vocab_word.next_review = datetime.utcnow() + timedelta(days=vocab_word.review_interval)
+        db.session.commit()
+        return jsonify({'success': False, 'message': 'Incorrect. You will review this word again tomorrow.'})
 
-    return render_template('fourth_review.html', word=selected_word.translation, correct_word=selected_word.word)
+
+@app.route('/review/due')
+@login_required
+def due_reviews():
+    # Get all vocabulary words that are due for review today
+    today = datetime.utcnow().date()
+    due_words = Vocabulary.query.filter_by(user_id=current_user.id).filter(Vocabulary.next_review <= today).all()
+
+    return render_template('due_reviews.html', due_words=due_words)
 
 # Route: Sign Up
 @app.route('/signup', methods=['GET', 'POST'])

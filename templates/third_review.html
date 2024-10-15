@@ -4,37 +4,16 @@
 
 {% block content %}
   <h1 class="my-4">Third Review</h1>
+  <p>Word {{ current_word_number }} of {{ total_words }}</p>
+  <p><strong>Unscramble the word for:</strong> {{ question }}</p>
+  <p>Scrambled word: {{ scrambled_word }}</p>
 
-  <p><strong>Unscramble the following word:</strong></p>
-  <p>Ukrainian Word: {{ word }}</p>
-  <p>Scrambled English Word: <strong>{{ scrambled_word }}</strong></p>
-
-  <form id="review-form">
+  <form method="post">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <input type="hidden" name="review_stage" value="{{ review_stage }}">
     <div class="form-group">
-      <label for="unscrambled">Your Answer:</label>
-      <input type="text" id="unscrambled" class="form-control" name="unscrambled">
+      <input type="text" name="answer" class="form-control" placeholder="Your answer" required>
     </div>
     <button type="submit" class="btn btn-primary mt-3">Submit</button>
   </form>
-
-  <div id="result" class="mt-3"></div>
-{% endblock %}
-
-{% block scripts %}
-  <script>
-    document.getElementById('review-form').addEventListener('submit', function(event) {
-      event.preventDefault();
-      const userAnswer = document.getElementById('unscrambled').value.trim().toLowerCase();
-      const correctAnswer = "{{ correct_word }}".toLowerCase();
-
-      let resultText;
-      if (userAnswer === correctAnswer) {
-        resultText = "<span class='text-success'>Correct!</span>";
-      } else {
-        resultText = `<span class='text-danger'>Incorrect! The correct answer was: {{ correct_word }}</span>`;
-      }
-
-      document.getElementById('result').innerHTML = resultText;
-    });
-  </script>
 {% endblock %}

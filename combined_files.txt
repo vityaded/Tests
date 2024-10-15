@@ -1,0 +1,3087 @@
+
+
+--- Start of ./requirements.txt ---
+
+Flask==2.2.5
+Flask-Login==0.6.2
+Flask-Migrate==4.0.4
+Flask-SQLAlchemy==3.0.5
+Werkzeug==2.2.3
+Jinja2==3.1.2
+
+
+--- End of ./requirements.txt ---
+
+
+
+--- Start of ./combine_files.py ---
+
+import os
+
+def combine_files_in_directory(directories, output_file):
+    with open(output_file, 'w', encoding='utf-8') as outfile:
+        for directory in directories:
+            for root, dirs, files in os.walk(directory):
+                # Ignore subdirectories by checking if we're still in the top-level folder
+                if root == directory:
+                    for file in files:
+                        file_path = os.path.join(root, file)
+                        try:
+                            with open(file_path, 'r', encoding='utf-8', errors='ignore') as infile:
+                                outfile.write(f"\n\n--- Start of {file_path} ---\n\n")
+                                outfile.write(infile.read())
+                                outfile.write(f"\n\n--- End of {file_path} ---\n\n")
+                        except Exception as e:
+                            print(f"Error reading {file_path}: {e}")
+
+if __name__ == "__main__":
+    directories = ["./", "./static", "./templates"]  # Root, static, and templates directories
+    output_file = "combined_files.txt"
+    combine_files_in_directory(directories, output_file)
+    print(f"All files combined into {output_file}")
+
+
+--- End of ./combine_files.py ---
+
+
+
+--- Start of ./app.py ---
+
+import os
+import uuid
+import re
+import random
+import requests
+from datetime import datetime, timezone
+from functools import wraps 
+
+
+from flask import (
+    Flask, render_template, request, redirect, url_for,
+    flash, abort, session, jsonify, Response
+)
+from flask_sqlalchemy import SQLAlchemy
+from flask_login import (
+    LoginManager, login_user, login_required, logout_user,
+    current_user, UserMixin
+)
+from werkzeug.security import generate_password_hash, check_password_hash
+from werkzeug.utils import secure_filename
+from flask_migrate import Migrate
+from flask_wtf import CSRFProtect
+from flask_wtf.csrf import CSRFError, generate_csrf
+from sqlalchemy import MetaData
+import bleach
+from forms import SignupForm, LoginForm, AddTestForm, EditTestForm
+
+# Initialize Flask app
+app = Flask(__name__)
+app.secret_key = 'your_secure_secret_key'  # Replace with a strong, unpredictable secret key
+
+# CSRF Protection
+csrf = CSRFProtect(app)
+
+# Configuration for file uploads
+UPLOAD_FOLDER = os.path.join('static', 'uploads')
+ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif'}
+
+app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
+
+# Ensure the upload folder exists
+os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
+
+# Define naming conventions for constraints
+naming_convention = {
+    "ix": "ix_%(table_name)s_%(column_0_name)s",
+    "uq": "uq_%(table_name)s_%(column_0_name)s",
+    "ck": "ck_%(table_name)s_%(constraint_name)s",
+    "fk": "fk_%(table_name)s_%(column_0_name)s_%(referred_table_name)s",
+    "pk": "pk_%(table_name)s"
+}
+
+# Create a MetaData instance with the naming convention
+metadata = MetaData(naming_convention=naming_convention)
+
+# Configure the SQLAlchemy part of the app instance
+app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///books.db'  # Update as needed
+
+# Create the SQLAlchemy db instance with the metadata
+db = SQLAlchemy(app, metadata=metadata)
+
+# Initialize Flask-Migrate
+migrate = Migrate(app, db)
+
+# Initialize Flask-Login
+login_manager = LoginManager()
+login_manager.init_app(app)
+login_manager.login_view = 'login'
+@app.route('/review/first')
+@login_required
+def first_review():
+    # Get the user's vocabulary
+    vocab_words = Vocabulary.query.filter_by(user_id=current_user.id).all()
+
+    if not vocab_words:
+        return jsonify({'error': 'No vocabulary words found'}), 404
+
+    # Randomly select one word
+    selected_word = random.choice(vocab_words)
+
+    # Get the correct translation
+    correct_translation = selected_word.translation
+
+    # Fetch 3 incorrect translations from other words
+    other_words = [word.translation for word in vocab_words if word.id != selected_word.id]
+    if len(other_words) < 3:
+        return jsonify({'error': 'Not enough vocabulary words to generate options'}), 400
+    incorrect_options = random.sample(other_words, 3)
+
+    # Combine correct and incorrect options and shuffle them
+    options = incorrect_options + [correct_translation]
+    random.shuffle(options)
+
+    return render_template('first_review.html', word=selected_word.word, options=options, correct_translation=correct_translation)
+
+@app.route('/review/second')
+@login_required
+def second_review():
+    # Get the user's vocabulary
+    vocab_words = Vocabulary.query.filter_by(user_id=current_user.id).all()
+
+    if not vocab_words:
+        return jsonify({'error': 'No vocabulary words found'}), 404
+
+    # Randomly select one word
+    selected_word = random.choice(vocab_words)
+
+    # Get the correct English word
+    correct_word = selected_word.word
+
+    # Fetch 3 incorrect English words from other words
+    other_words = [word.word for word in vocab_words if word.id != selected_word.id]
+    if len(other_words) < 3:
+        return jsonify({'error': 'Not enough vocabulary words to generate options'}), 400
+    incorrect_options = random.sample(other_words, 3)
+
+    # Combine correct and incorrect options and shuffle them
+    options = incorrect_options + [correct_word]
+    random.shuffle(options)
+
+    return render_template('second_review.html', word=selected_word.translation, options=options, correct_word=correct_word)
+
+
+# User loader callback
+@login_manager.user_loader
+def load_user(user_id):
+    return db.session.get(User, int(user_id))
+
+# Define the User model
+class User(UserMixin, db.Model):
+    __tablename__ = 'user'  # Explicitly specify table name
+    id = db.Column(db.Integer, primary_key=True)
+    username = db.Column(db.String(150), nullable=False, unique=True)
+    password = db.Column(db.String(200), nullable=False)
+    is_admin = db.Column(db.Boolean, default=False)
+    test_results = db.relationship('TestResult', backref='user', lazy=True)
+    tests_created = db.relationship('Test', backref='creator', lazy=True)
+    
+    # Add the vocabulary relationship
+    vocabulary = db.relationship('Vocabulary', backref='user', lazy=True)
+
+    def set_password(self, password):
+        self.password = generate_password_hash(password)
+
+    def check_password(self, password):
+        return check_password_hash(self.password, password)
+
+class Vocabulary(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    word = db.Column(db.String(150), nullable=False)
+    translation = db.Column(db.String(150), nullable=False)
+    pronunciation_url = db.Column(db.String(200), nullable=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    
+    # Track the next review date and interval (in days)
+    next_review = db.Column(db.Date, nullable=False, default=datetime.utcnow)
+    review_interval = db.Column(db.Integer, default=1)  # Starts with 1 day interval
+
+
+
+class LearnTestResult(db.Model):
+    __tablename__ = 'learn_test_result'
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    test_id = db.Column(db.Integer, db.ForeignKey('test.id'), nullable=False)
+    completed_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
+
+    user = db.relationship('User', backref='learn_test_results')
+    test = db.relationship('Test', backref='learn_test_results')
+
+
+# Define the Book model
+class Book(db.Model):
+    __tablename__ = 'book'  # Explicitly specify table name
+    id = db.Column(db.Integer, primary_key=True)
+    title = db.Column(db.String(150), nullable=False)
+    tests = db.relationship('Test', backref='book', lazy=True)
+
+# Define the Test model
+class Test(db.Model):
+    __tablename__ = 'test'  # Explicitly specify table name
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(150), nullable=False)
+    content = db.Column(db.Text, nullable=False)
+    book_id = db.Column(db.Integer, db.ForeignKey('book.id'), nullable=False)
+    time_limit = db.Column(db.Integer, nullable=True)  # Time limit in minutes
+    test_results = db.relationship('TestResult', backref='test', lazy=True)
+    created_by = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+
+# Define the TestResult model
+class TestResult(db.Model):
+    __tablename__ = 'test_result'  # Explicitly specify table name
+    id = db.Column(db.Integer, primary_key=True)
+    score = db.Column(db.Integer, nullable=False)
+    total_questions = db.Column(db.Integer, nullable=False)
+    timestamp = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    test_id = db.Column(db.Integer, db.ForeignKey('test.id'), nullable=False)
+
+@app.route('/tts')
+def tts():
+    text = request.args.get('text')
+    language = request.args.get('lang', 'en')
+
+    # Make the request to Google TTS API
+    tts_url = f'https://translate.google.com/translate_tts?ie=UTF-8&tl={language}&client=gtx&q={text}'
+    headers = {'User-Agent': 'Mozilla/5.0'}  # Required to mimic browser request
+    response = requests.get(tts_url, headers=headers)
+
+    # Return the audio response
+    return Response(response.content, mimetype='audio/mpeg')
+
+@app.route('/translate')
+def translate_word():
+    word = request.args.get('word')
+    source_lang = 'en'
+    target_lang = 'uk'
+
+    if not word:
+        return jsonify({'error': 'No word provided for translation'}), 400
+
+    # Construct the translation URL for Google Translate
+    translate_url = (
+        f'https://translate.googleapis.com/translate_a/single?client=gtx&sl={source_lang}&tl={target_lang}&dt=t&q={word}'
+    )
+
+    try:
+        # Make the request to the Google Translate API
+        response = requests.get(translate_url)
+        response.raise_for_status()
+
+        translation_data = response.json()
+
+        if translation_data and isinstance(translation_data, list) and len(translation_data) > 0:
+            translation = translation_data[0][0][0]
+            pronunciation_url = f'https://translate.google.com/translate_tts?ie=UTF-8&tl={source_lang}&client=gtx&q={word}'
+
+            return jsonify({
+                'translation': translation,
+                'pronunciation_url': pronunciation_url
+            })
+        else:
+            return jsonify({'error': 'Unexpected translation response format'}), 500
+
+    except requests.RequestException as e:
+        return jsonify({'error': f'Translation API request failed: {str(e)}'}), 500
+
+
+# Error handler for 403 Forbidden
+@app.errorhandler(403)
+def forbidden(e):
+    return render_template('403.html'), 403
+
+# Error handler for CSRF errors
+@app.errorhandler(CSRFError)
+def handle_csrf_error(e):
+    return render_template('csrf_error.html', reason=e.description), 400
+
+# Context processor to inject csrf_token into all templates
+@app.context_processor
+def inject_csrf_token():
+    return dict(csrf_token=generate_csrf())
+
+
+@app.route('/autocomplete/book', methods=['GET'])
+def autocomplete_book():
+    query = request.args.get('q', '')
+    matching_books = Book.query.filter(Book.title.ilike(f'%{query}%')).all()  # Search for books with similar names
+    book_titles = [book.title for book in matching_books]
+    return jsonify(book_titles)
+
+@app.route('/autocomplete/test', methods=['GET'])
+def autocomplete_test():
+    query = request.args.get('q', '')
+    matching_tests = Test.query.filter(Test.name.ilike(f'%{query}%')).all()  # Search for tests with similar names
+    test_names = [test.name for test in matching_tests]
+    return jsonify(test_names)
+
+# Decorator to require admin access
+def admin_required(f):
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if not current_user.is_authenticated or not current_user.is_admin:
+            abort(403)  # Forbidden
+        return f(*args, **kwargs)
+    return decorated_function
+
+# Helper Function: Check Allowed File Extensions
+def allowed_file(filename):
+    return '.' in filename and \
+           filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+
+# Route: Home Page
+@app.route('/')
+def index():
+    books = Book.query.all()  # Fetch all books
+    return render_template('index.html', books=books)
+
+@app.route('/book/<int:book_id>')
+def book_tests(book_id):
+    book = Book.query.get_or_404(book_id)
+    tests = Test.query.filter_by(book_id=book.id).all()  # Fetch all tests for the specific book
+    return render_template('book_tests.html', book=book, tests=tests)
+
+@app.route('/review/third')
+@login_required
+def third_review():
+    # Get the user's vocabulary
+    vocab_words = Vocabulary.query.filter_by(user_id=current_user.id).all()
+
+    if not vocab_words:
+        return jsonify({'error': 'No vocabulary words found'}), 404
+
+    # Randomly select one word
+    selected_word = random.choice(vocab_words)
+
+    # Get the correct English word and scramble it
+    correct_word = selected_word.word
+    scrambled_word = ''.join(random.sample(correct_word, len(correct_word)))
+
+    return render_template('third_review.html', word=selected_word.translation, scrambled_word=scrambled_word, correct_word=correct_word)
+
+@app.route('/review/fourth', methods=['POST'])
+@login_required
+def process_fourth_review():
+    word_id = request.form.get('word_id')
+    user_answer = request.form.get('translation').strip().lower()
+
+    vocab_word = Vocabulary.query.filter_by(id=word_id, user_id=current_user.id).first()
+    if not vocab_word:
+        return jsonify({'error': 'Word not found'}), 404
+
+    correct_answer = vocab_word.word.lower()
+    if user_answer == correct_answer:
+        # Correct answer: Increase the interval
+        vocab_word.review_interval = min(vocab_word.review_interval * 2, 30)  # Double the interval, max 30 days
+        vocab_word.next_review = datetime.utcnow() + timedelta(days=vocab_word.review_interval)
+        db.session.commit()
+        return jsonify({'success': True, 'message': 'Correct! Your next review is in {} days.'.format(vocab_word.review_interval)})
+    else:
+        # Incorrect answer: Reset interval to 1 day
+        vocab_word.review_interval = 1
+        vocab_word.next_review = datetime.utcnow() + timedelta(days=vocab_word.review_interval)
+        db.session.commit()
+        return jsonify({'success': False, 'message': 'Incorrect. You will review this word again tomorrow.'})
+
+
+@app.route('/review/due')
+@login_required
+def due_reviews():
+    # Get all vocabulary words that are due for review today
+    today = datetime.utcnow().date()
+    due_words = Vocabulary.query.filter_by(user_id=current_user.id).filter(Vocabulary.next_review <= today).all()
+
+    return render_template('due_reviews.html', due_words=due_words)
+
+# Route: Sign Up
+@app.route('/signup', methods=['GET', 'POST'])
+def signup():
+    if current_user.is_authenticated:
+        return redirect(url_for('index'))
+
+    form = SignupForm()
+    if form.validate_on_submit():
+        username = form.username.data.strip()
+        password = form.password.data.strip()
+
+        # Check if username is taken
+        existing_user = User.query.filter_by(username=username).first()
+        if existing_user:
+            flash('Username already exists. Please choose a different one.', 'danger')
+            return redirect(url_for('signup'))
+
+        # Create new user
+        new_user = User(username=username)
+        new_user.set_password(password)
+
+        # Check if any users exist
+        if User.query.count() == 0:
+            # This is the first user, make them admin
+            new_user.is_admin = True
+        db.session.add(new_user)
+        db.session.commit()
+
+        # Log the user in and redirect to home page
+        login_user(new_user)
+        flash('Account created successfully!', 'success')
+        return redirect(url_for('index'))
+
+    return render_template('signup.html', form=form)
+
+# Route: Login
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    if current_user.is_authenticated:
+        return redirect(url_for('index'))
+
+    form = LoginForm()
+    if form.validate_on_submit():
+        username = form.username.data.strip()
+        password = form.password.data.strip()
+
+        # Authenticate user
+        user = User.query.filter_by(username=username).first()
+        if user and user.check_password(password):
+            login_user(user)
+            flash('Logged in successfully!', 'success')
+            return redirect(url_for('index'))
+        else:
+            flash('Invalid username or password.', 'danger')
+            return redirect(url_for('login'))
+
+    return render_template('login.html', form=form)
+
+# Route: Logout
+@app.route('/logout')
+@login_required
+def logout():
+    logout_user()
+    flash('You have been logged out.', 'info')
+    return redirect(url_for('index'))
+
+# Route: Add Test
+@app.route('/add', methods=['GET', 'POST'])
+@login_required
+def add_test():
+    form = AddTestForm()
+    if form.validate_on_submit():
+        book_title = form.book_title.data.strip()
+        test_name = form.test_name.data.strip()
+        test_content = form.test_content.data.strip()
+        time_limit = form.time_limit.data
+
+        # Check if the book exists
+        book = Book.query.filter_by(title=book_title).first()
+        if not book:
+            # If the book doesn't exist, create it
+            book = Book(title=book_title)
+            db.session.add(book)
+            db.session.commit()
+
+        # Create the new test
+        new_test = Test(
+            name=test_name,
+            content=test_content,
+            book=book,
+            time_limit=time_limit,
+            created_by=current_user.id
+        )
+        db.session.add(new_test)
+        db.session.commit()
+
+        flash('Test added successfully!', 'success')
+        return redirect(url_for('index'))
+
+    return render_template('add.html', form=form)
+
+# Route: Edit Test
+@app.route('/edit_test/<int:test_id>', methods=['GET', 'POST'])
+@login_required
+def edit_test(test_id):
+    test = Test.query.get_or_404(test_id)
+    if not current_user.is_admin and test.created_by != current_user.id:
+        abort(403)
+
+    form = EditTestForm(obj=test)
+    if form.validate_on_submit():
+        test_name = form.test_name.data.strip()
+        test_content = form.test_content.data.strip()
+        time_limit = form.time_limit.data
+
+        # Update test details
+        test.name = test_name
+        test.content = test_content
+        test.time_limit = time_limit
+        db.session.commit()
+        # Continue from where the previous file ends
+
+        flash('Test updated successfully!', 'success')
+        return redirect(url_for('index'))
+
+    return render_template('edit_test.html', form=form, test=test)
+
+# Route: Delete Test
+@app.route('/delete_test/<int:test_id>', methods=['POST'])
+@login_required
+def delete_test(test_id):
+    test = Test.query.get_or_404(test_id)
+    if not current_user.is_admin and test.created_by != current_user.id:
+        abort(403)
+
+    db.session.delete(test)
+    db.session.commit()
+    flash('Test deleted successfully!', 'success')
+    return redirect(url_for('index'))
+
+# Route: Take and Submit Test
+@app.route('/test/<int:test_id>', methods=['GET', 'POST'])
+@login_required
+def take_test(test_id):
+    test = Test.query.get_or_404(test_id)
+    test_content = test.content
+    time_limit = test.time_limit  # Time limit in minutes
+
+    # Initialize variables
+    processed_content = []
+    correct_answers = {}
+    question_counter = 1
+
+    # Function to replace answers with input fields or dropdowns
+    def replace_answers(line):
+        nonlocal question_counter
+        dropdown_pattern = r'#\s*\[([^\]]+)\]\s*([^\#]+)\s*#'
+        input_pattern = r'\[([^\]]+)\]'
+
+        def dropdown_repl(match):
+            nonlocal question_counter
+            options_str = match.group(1)
+            correct_answer = match.group(2).strip()
+            options = [opt.strip() for opt in options_str.split(',')]
+            qid = f'q{question_counter}'
+            correct_answers[qid] = correct_answer
+            question_counter += 1
+
+            if request.method == 'POST':
+                user_answer = request.form.get(qid, '').strip().lower()
+                select_class = 'custom-select correct' if user_answer == correct_answer.lower() else 'custom-select incorrect'
+                disabled = 'disabled'
+            else:
+                select_class = 'custom-select'
+                disabled = ''
+
+            select_html = f'<select name="{qid}" class="{select_class}" {disabled} style="display: inline-block; width: auto;">'
+            for option in options:
+                selected = 'selected' if request.method == 'POST' and user_answer == option.strip().lower() else ''
+                select_html += f'<option value="{option}" {selected}>{option}</option>'
+            select_html += '</select>'
+
+            if request.method == 'POST' and user_answer != correct_answer.lower():
+                select_html += f' <span class="correct-answer">(Correct answer: {correct_answer})</span>'
+
+            return select_html
+
+        def input_repl(match):
+            nonlocal question_counter
+            correct_answer = match.group(1).strip()
+            qid = f'q{question_counter}'
+            correct_answers[qid] = correct_answer
+            question_counter += 1
+
+            if request.method == 'POST':
+                user_answer = request.form.get(qid, '')
+                input_class = 'form-control correct' if user_answer.strip().lower() == correct_answer.lower() else 'form-control incorrect'
+                readonly = 'readonly'
+            else:
+                input_class = 'form-control'
+                readonly = ''
+
+            input_html = f'<input type="text" name="{qid}" value="{user_answer if request.method == "POST" else ""}" class="{input_class}" style="width: auto;" {readonly}>'
+
+            if request.method == 'POST' and user_answer.strip().lower() != correct_answer.lower():
+                input_html += f' <span class="correct-answer">(Correct answer: {correct_answer})</span>'
+
+            return input_html
+
+        # Process the line
+        line = re.sub(dropdown_pattern, dropdown_repl, line)
+        line = re.sub(input_pattern, input_repl, line)
+        return line
+
+    # Process each line in test content
+    for line in test_content.splitlines():
+        processed_line = replace_answers(line)
+        processed_content.append(processed_line)
+
+    score = 0
+    total_questions = question_counter - 1
+
+    if request.method == 'POST':
+        # Time limit enforcement
+        start_time_str = session.get(f'start_time_{test_id}')
+        if not start_time_str:
+            flash('Test session expired. Please start the test again.', 'danger')
+            return redirect(url_for('take_test', test_id=test_id))
+        else:
+            start_time = datetime.fromisoformat(start_time_str)
+            elapsed_time = datetime.now(timezone.utc) - start_time
+            elapsed_minutes = elapsed_time.total_seconds() / 60
+
+            if time_limit and elapsed_minutes > time_limit:
+                flash('Time limit exceeded. Test submitted automatically.', 'warning')
+
+        # Calculate score
+        for qid, correct_answer in correct_answers.items():
+            user_answer = request.form.get(qid, '')
+            if user_answer.strip().lower() == correct_answer.lower():
+                score += 1
+
+        # Save test result
+        test_result = TestResult(
+            score=score,
+            total_questions=total_questions,
+            user_id=current_user.id,
+            test_id=test.id
+        )
+        db.session.add(test_result)
+        db.session.commit()
+
+        # Clear session
+        session.pop(f'start_time_{test_id}', None)
+
+        flash(f'You scored {score} out of {total_questions}!', 'info')
+        return render_template(
+            'take_test.html',
+            test=test,
+            processed_content=processed_content,
+            score=score,
+            total=total_questions,
+            time_limit=time_limit
+        )
+
+    else:
+        # GET request: Start test, store start time in session
+        session[f'start_time_{test_id}'] = datetime.now(timezone.utc).isoformat()
+
+        return render_template(
+            'take_test.html',
+            test=test,
+            processed_content=processed_content,
+            score=None,
+            total=total_questions,
+            time_limit=time_limit
+        )
+
+
+@app.route('/search')
+def search():
+    query = request.args.get('query', '').strip()
+    search_option = request.args.get('search_option', 'books')
+
+    if not query:
+        flash('Please enter a search term.', 'warning')
+        return redirect(url_for('index'))
+
+    if search_option == 'books':
+        # Search for books by title
+        books = Book.query.filter(Book.title.ilike(f'%{query}%')).all()
+        return render_template('search_results.html', books=books, query=query, search_option=search_option)
+    else:
+        # Search for tests by name
+        tests = Test.query.filter(Test.name.ilike(f'%{query}%')).all()
+        return render_template('search_results.html', tests=tests, query=query, search_option=search_option)
+
+
+@app.route('/learn/<int:test_id>', methods=['GET', 'POST'])
+@login_required
+def learn_test(test_id):
+    test = Test.query.get_or_404(test_id)
+    test_content = test.content
+
+    # Initialize variables
+    processed_content = []
+    correct_answers = {}
+    question_counter = 1
+    user_correct = {}
+
+    # Function to replace answers with input fields or dropdowns
+    def replace_answers(line):
+        nonlocal question_counter
+        dropdown_pattern = r'#\s*\[([^\]]+)\]\s*([^\#]+)\s*#'
+        input_pattern = r'\[([^\]]+)\]'
+
+        def dropdown_repl(match):
+            nonlocal question_counter
+            options_str = match.group(1)
+            correct_answer = match.group(2).strip()
+            options = [opt.strip() for opt in options_str.split(',')]
+            qid = f'q{question_counter}'
+            correct_answers[qid] = correct_answer
+            question_counter += 1
+
+            select_class = 'custom-select'
+            user_answer = request.form.get(qid, '').strip().lower() if request.method == 'POST' else ''
+            
+            # Check if user's answer is correct
+            if user_answer == correct_answer.lower():
+                user_correct[qid] = True
+                select_class += ' correct'
+            else:
+                user_correct[qid] = False
+
+            select_html = f'<select name="{qid}" class="{select_class}">'
+            for option in options:
+                selected = 'selected' if request.method == 'POST' and user_answer == option.strip().lower() else ''
+                select_html += f'<option value="{option}" {selected}>{option}</option>'
+            select_html += '</select>'
+
+            return select_html
+
+        def input_repl(match):
+            nonlocal question_counter
+            correct_answer = match.group(1).strip()
+            qid = f'q{question_counter}'
+            correct_answers[qid] = correct_answer
+            question_counter += 1
+
+            user_answer = request.form.get(qid, '').strip().lower() if request.method == 'POST' else ''
+            input_class = 'form-control'
+
+            # Check if user's answer is correct
+            if user_answer == correct_answer.lower():
+                user_correct[qid] = True
+                input_class += ' correct'
+            else:
+                user_correct[qid] = False
+
+            input_html = f'<input type="text" name="{qid}" value="{user_answer}" class="{input_class}">'
+
+            return input_html
+
+        # Process the line
+        line = re.sub(dropdown_pattern, dropdown_repl, line)
+        line = re.sub(input_pattern, input_repl, line)
+        return line
+
+    # Process each line in test content
+    for line in test_content.splitlines():
+        processed_line = replace_answers(line)
+        processed_content.append(processed_line)
+
+    if request.method == 'POST':
+        # Check if all answers are correct
+        all_correct = all(user_correct.values())
+        if all_correct:
+            flash('You have answered everything correctly! You can now proceed.', 'success')
+        else:
+            flash('Some answers are incorrect or missing. Please try again.', 'danger')
+
+    return render_template(
+        'learn_test.html',
+        test_name=test.name,
+        processed_content=processed_content
+    )
+
+
+@app.route('/my_vocabulary')
+@login_required
+def my_vocabulary():
+    vocab_words = Vocabulary.query.filter_by(user_id=current_user.id).all()
+    return render_template('vocabulary.html', vocab_words=vocab_words)
+
+
+@app.route('/add_to_vocabulary', methods=['POST'])
+@login_required
+def add_to_vocabulary():
+    data = request.get_json()
+    word = data.get('word')
+    translation = data.get('translation')
+
+    # Ensure that word and translation are not None or empty
+    if not word or not translation:
+        return jsonify({'success': False, 'error': 'Invalid data: word or translation is missing'}), 400
+
+    try:
+        # Add word to user's vocabulary
+        new_vocab = Vocabulary(word=word, translation=translation, user_id=current_user.id)
+        db.session.add(new_vocab)
+        db.session.commit()
+        return jsonify({'success': True})
+
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/autocomplete_search')
+def autocomplete_search():
+    query = request.args.get('query', '').strip()
+    search_option = request.args.get('search_option', 'books')
+
+    results = []
+
+    if query:
+        if search_option == 'books':
+            # Search for matching books by title
+            books = Book.query.filter(Book.title.ilike(f'%{query}%')).all()
+            results = [{'label': book.title, 'value': book.title} for book in books]
+        elif search_option == 'tests':
+            # Search for matching tests by name
+            tests = Test.query.filter(Test.name.ilike(f'%{query}%')).all()
+            results = [{'label': test.name, 'value': test.name} for test in tests]
+
+    return jsonify(results)
+
+
+# Route: Admin Panel
+@app.route('/admin')
+@app.route('/admin')
+@admin_required
+def admin_panel():
+    test_results = TestResult.query.order_by(TestResult.timestamp.desc()).all()
+    learn_test_results = LearnTestResult.query.order_by(LearnTestResult.completed_at.desc()).all()
+    return render_template(
+        'admin_panel.html', 
+        test_results=test_results,
+        learn_test_results=learn_test_results
+    )
+
+# Run the Flask app
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=3000, debug=True)
+
+
+
+--- End of ./app.py ---
+
+
+
+--- Start of ./.env ---
+
+# .env
+SECRET_KEY=9aadf41fc207fa98f4e7e5df141eefbfc681a5bd9dc3db1e
+FLASK_DEBUG=True
+
+
+--- End of ./.env ---
+
+
+
+--- Start of ./combined_files.txt ---
+
+
+
+--- Start of ./requirements.txt ---
+
+Flask==2.2.5
+Flask-Login==0.6.2
+Flask-Migrate==4.0.4
+Flask-SQLAlchemy==3.0.5
+Werkzeug==2.2.3
+Jinja2==3.1.2
+
+
+--- End of ./requirements.txt ---
+
+
+
+--- Start of ./combine_files.py ---
+
+import os
+
+def combine_files_in_directory(directories, output_file):
+    with open(output_file, 'w', encoding='utf-8') as outfile:
+        for directory in directories:
+            for root, dirs, files in os.walk(directory):
+                # Ignore subdirectories by checking if we're still in the top-level folder
+                if root == directory:
+                    for file in files:
+                        file_path = os.path.join(root, file)
+                        try:
+                            with open(file_path, 'r', encoding='utf-8', errors='ignore') as infile:
+                                outfile.write(f"\n\n--- Start of {file_path} ---\n\n")
+                                outfile.write(infile.read())
+                                outfile.write(f"\n\n--- End of {file_path} ---\n\n")
+                        except Exception as e:
+                            print(f"Error reading {file_path}: {e}")
+
+if __name__ == "__main__":
+    directories = ["./", "./static", "./templates"]  # Root, static, and templates directories
+    output_file = "combined_files.txt"
+    combine_files_in_directory(directories, output_file)
+    print(f"All files combined into {output_file}")
+
+
+--- End of ./combine_files.py ---
+
+
+
+--- Start of ./app.py ---
+
+import os
+import uuid
+import re
+import random
+import requests
+from datetime import datetime, timezone
+from functools import wraps 
+
+
+from flask import (
+    Flask, render_template, request, redirect, url_for,
+    flash, abort, session, jsonify, Response
+)
+from flask_sqlalchemy import SQLAlchemy
+from flask_login import (
+    LoginManager, login_user, login_required, logout_user,
+    current_user, UserMixin
+)
+from werkzeug.security import generate_password_hash, check_password_hash
+from werkzeug.utils import secure_filename
+from flask_migrate import Migrate
+from flask_wtf import CSRFProtect
+from flask_wtf.csrf import CSRFError, generate_csrf
+from sqlalchemy import MetaData
+import bleach
+from forms import SignupForm, LoginForm, AddTestForm, EditTestForm
+
+# Initialize Flask app
+app = Flask(__name__)
+app.secret_key = 'your_secure_secret_key'  # Replace with a strong, unpredictable secret key
+
+# CSRF Protection
+csrf = CSRFProtect(app)
+
+# Configuration for file uploads
+UPLOAD_FOLDER = os.path.join('static', 'uploads')
+ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif'}
+
+app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
+
+# Ensure the upload folder exists
+os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
+
+# Define naming conventions for constraints
+naming_convention = {
+    "ix": "ix_%(table_name)s_%(column_0_name)s",
+    "uq": "uq_%(table_name)s_%(column_0_name)s",
+    "ck": "ck_%(table_name)s_%(constraint_name)s",
+    "fk": "fk_%(table_name)s_%(column_0_name)s_%(referred_table_name)s",
+    "pk": "pk_%(table_name)s"
+}
+
+# Create a MetaData instance with the naming convention
+metadata = MetaData(naming_convention=naming_convention)
+
+# Configure the SQLAlchemy part of the app instance
+app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///books.db'  # Update as needed
+
+# Create the SQLAlchemy db instance with the metadata
+db = SQLAlchemy(app, metadata=metadata)
+
+# Initialize Flask-Migrate
+migrate = Migrate(app, db)
+
+# Initialize Flask-Login
+login_manager = LoginManager()
+login_manager.init_app(app)
+login_manager.login_view = 'login'
+@app.route('/review/first')
+@login_required
+def first_review():
+    # Get the user's vocabulary
+    vocab_words = Vocabulary.query.filter_by(user_id=current_user.id).all()
+
+    if not vocab_words:
+        return jsonify({'error': 'No vocabulary words found'}), 404
+
+    # Randomly select one word
+    selected_word = random.choice(vocab_words)
+
+    # Get the correct translation
+    correct_translation = selected_word.translation
+
+    # Fetch 3 incorrect translations from other words
+    other_words = [word.translation for word in vocab_words if word.id != selected_word.id]
+    if len(other_words) < 3:
+        return jsonify({'error': 'Not enough vocabulary words to generate options'}), 400
+    incorrect_options = random.sample(other_words, 3)
+
+    # Combine correct and incorrect options and shuffle them
+    options = incorrect_options + [correct_translation]
+    random.shuffle(options)
+
+    return render_template('first_review.html', word=selected_word.word, options=options, correct_translation=correct_translation)
+
+@app.route('/review/second')
+@login_required
+def second_review():
+    # Get the user's vocabulary
+    vocab_words = Vocabulary.query.filter_by(user_id=current_user.id).all()
+
+    if not vocab_words:
+        return jsonify({'error': 'No vocabulary words found'}), 404
+
+    # Randomly select one word
+    selected_word = random.choice(vocab_words)
+
+    # Get the correct English word
+    correct_word = selected_word.word
+
+    # Fetch 3 incorrect English words from other words
+    other_words = [word.word for word in vocab_words if word.id != selected_word.id]
+    if len(other_words) < 3:
+        return jsonify({'error': 'Not enough vocabulary words to generate options'}), 400
+    incorrect_options = random.sample(other_words, 3)
+
+    # Combine correct and incorrect options and shuffle them
+    options = incorrect_options + [correct_word]
+    random.shuffle(options)
+
+    return render_template('second_review.html', word=selected_word.translation, options=options, correct_word=correct_word)
+
+
+# User loader callback
+@login_manager.user_loader
+def load_user(user_id):
+    return db.session.get(User, int(user_id))
+
+# Define the User model
+class User(UserMixin, db.Model):
+    __tablename__ = 'user'  # Explicitly specify table name
+    id = db.Column(db.Integer, primary_key=True)
+    username = db.Column(db.String(150), nullable=False, unique=True)
+    password = db.Column(db.String(200), nullable=False)
+    is_admin = db.Column(db.Boolean, default=False)
+    test_results = db.relationship('TestResult', backref='user', lazy=True)
+    tests_created = db.relationship('Test', backref='creator', lazy=True)
+    
+    # Add the vocabulary relationship
+    vocabulary = db.relationship('Vocabulary', backref='user', lazy=True)
+
+    def set_password(self, password):
+        self.password = generate_password_hash(password)
+
+    def check_password(self, password):
+        return check_password_hash(self.password, password)
+
+class Vocabulary(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    word = db.Column(db.String(150), nullable=False)
+    translation = db.Column(db.String(150), nullable=False)
+    pronunciation_url = db.Column(db.String(200), nullable=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    
+    # Track the next review date and interval (in days)
+    next_review = db.Column(db.Date, nullable=False, default=datetime.utcnow)
+    review_interval = db.Column(db.Integer, default=1)  # Starts with 1 day interval
+
+
+
+class LearnTestResult(db.Model):
+    __tablename__ = 'learn_test_result'
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    test_id = db.Column(db.Integer, db.ForeignKey('test.id'), nullable=False)
+    completed_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
+
+    user = db.relationship('User', backref='learn_test_results')
+    test = db.relationship('Test', backref='learn_test_results')
+
+
+# Define the Book model
+class Book(db.Model):
+    __tablename__ = 'book'  # Explicitly specify table name
+    id = db.Column(db.Integer, primary_key=True)
+    title = db.Column(db.String(150), nullable=False)
+    tests = db.relationship('Test', backref='book', lazy=True)
+
+# Define the Test model
+class Test(db.Model):
+    __tablename__ = 'test'  # Explicitly specify table name
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(150), nullable=False)
+    content = db.Column(db.Text, nullable=False)
+    book_id = db.Column(db.Integer, db.ForeignKey('book.id'), nullable=False)
+    time_limit = db.Column(db.Integer, nullable=True)  # Time limit in minutes
+    test_results = db.relationship('TestResult', backref='test', lazy=True)
+    created_by = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+
+# Define the TestResult model
+class TestResult(db.Model):
+    __tablename__ = 'test_result'  # Explicitly specify table name
+    id = db.Column(db.Integer, primary_key=True)
+    score = db.Column(db.Integer, nullable=False)
+    total_questions = db.Column(db.Integer, nullable=False)
+    timestamp = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    test_id = db.Column(db.Integer, db.ForeignKey('test.id'), nullable=False)
+
+@app.route('/tts')
+def tts():
+    text = request.args.get('text')
+    language = request.args.get('lang', 'en')
+
+    # Make the request to Google TTS API
+    tts_url = f'https://translate.google.com/translate_tts?ie=UTF-8&tl={language}&client=gtx&q={text}'
+    headers = {'User-Agent': 'Mozilla/5.0'}  # Required to mimic browser request
+    response = requests.get(tts_url, headers=headers)
+
+    # Return the audio response
+    return Response(response.content, mimetype='audio/mpeg')
+
+@app.route('/translate')
+def translate_word():
+    word = request.args.get('word')
+    source_lang = 'en'
+    target_lang = 'uk'
+
+    if not word:
+        return jsonify({'error': 'No word provided for translation'}), 400
+
+    # Construct the translation URL for Google Translate
+    translate_url = (
+        f'https://translate.googleapis.com/translate_a/single?client=gtx&sl={source_lang}&tl={target_lang}&dt=t&q={word}'
+    )
+
+    try:
+        # Make the request to the Google Translate API
+        response = requests.get(translate_url)
+        response.raise_for_status()
+
+        translation_data = response.json()
+
+        if translation_data and isinstance(translation_data, list) and len(translation_data) > 0:
+            translation = translation_data[0][0][0]
+            pronunciation_url = f'https://translate.google.com/translate_tts?ie=UTF-8&tl={source_lang}&client=gtx&q={word}'
+
+            return jsonify({
+                'translation': translation,
+                'pronunciation_url': pronunciation_url
+            })
+        else:
+            return jsonify({'error': 'Unexpected translation response format'}), 500
+
+    except requests.RequestException as e:
+        return jsonify({'error': f'Translation API request failed: {str(e)}'}), 500
+
+
+# Error handler for 403 Forbidden
+@app.errorhandler(403)
+def forbidden(e):
+    return render_template('403.html'), 403
+
+# Error handler for CSRF errors
+@app.errorhandler(CSRFError)
+def handle_csrf_error(e):
+    return render_template('csrf_error.html', reason=e.description), 400
+
+# Context processor to inject csrf_token into all templates
+@app.context_processor
+def inject_csrf_token():
+    return dict(csrf_token=generate_csrf())
+
+
+@app.route('/autocomplete/book', methods=['GET'])
+def autocomplete_book():
+    query = request.args.get('q', '')
+    matching_books = Book.query.filter(Book.title.ilike(f'%{query}%')).all()  # Search for books with similar names
+    book_titles = [book.title for book in matching_books]
+    return jsonify(book_titles)
+
+@app.route('/autocomplete/test', methods=['GET'])
+def autocomplete_test():
+    query = request.args.get('q', '')
+    matching_tests = Test.query.filter(Test.name.ilike(f'%{query}%')).all()  # Search for tests with similar names
+    test_names = [test.name for test in matching_tests]
+    return jsonify(test_names)
+
+# Decorator to require admin access
+def admin_required(f):
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if not current_user.is_authenticated or not current_user.is_admin:
+            abort(403)  # Forbidden
+        return f(*args, **kwargs)
+    return decorated_function
+
+# Helper Function: Check Allowed File Extensions
+def allowed_file(filename):
+    return '.' in filename and \
+           filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+
+# Route: Home Page
+@app.route('/')
+def index():
+    books = Book.query.all()  # Fetch all books
+    return render_template('index.html', books=books)
+
+@app.route('/book/<int:book_id>')
+def book_tests(book_id):
+    book = Book.query.get_or_404(book_id)
+    tests = Test.query.filter_by(book_id=book.id).all()  # Fetch all tests for the specific book
+    return render_template('book_tests.html', book=book, tests=tests)
+
+@app.route('/review/third')
+@login_required
+def third_review():
+    # Get the user's vocabulary
+    vocab_words = Vocabulary.query.filter_by(user_id=current_user.id).all()
+
+    if not vocab_words:
+        return jsonify({'error': 'No vocabulary words found'}), 404
+
+    # Randomly select one word
+    selected_word = random.choice(vocab_words)
+
+    # Get the correct English word and scramble it
+    correct_word = selected_word.word
+    scrambled_word = ''.join(random.sample(correct_word, len(correct_word)))
+
+    return render_template('third_review.html', word=selected_word.translation, scrambled_word=scrambled_word, correct_word=correct_word)
+
+@app.route('/review/fourth', methods=['POST'])
+@login_required
+def process_fourth_review():
+    word_id = request.form.get('word_id')
+    user_answer = request.form.get('translation').strip().lower()
+
+    vocab_word = Vocabulary.query.filter_by(id=word_id, user_id=current_user.id).first()
+    if not vocab_word:
+        return jsonify({'error': 'Word not found'}), 404
+
+    correct_answer = vocab_word.word.lower()
+    if user_answer == correct_answer:
+        # Correct answer: Increase the interval
+        vocab_word.review_interval = min(vocab_word.review_interval * 2, 30)  # Double the interval, max 30 days
+        vocab_word.next_review = datetime.utcnow() + timedelta(days=vocab_word.review_interval)
+        db.session.commit()
+        return jsonify({'success': True, 'message': 'Correct! Your next review is in {} days.'.format(vocab_word.review_interval)})
+    else:
+        # Incorrect answer: Reset interval to 1 day
+        vocab_word.review_interval = 1
+        vocab_word.next_review = datetime.utcnow() + timedelta(days=vocab_word.review_interval)
+        db.session.commit()
+        return jsonify({'success': False, 'message': 'Incorrect. You will review this word again tomorrow.'})
+
+
+@app.route('/review/due')
+@login_required
+def due_reviews():
+    # Get all vocabulary words that are due for review today
+    today = datetime.utcnow().date()
+    due_words = Vocabulary.query.filter_by(user_id=current_user.id).filter(Vocabulary.next_review <= today).all()
+
+    return render_template('due_reviews.html', due_words=due_words)
+
+# Route: Sign Up
+@app.route('/signup', methods=['GET', 'POST'])
+def signup():
+    if current_user.is_authenticated:
+        return redirect(url_for('index'))
+
+    form = SignupForm()
+    if form.validate_on_submit():
+        username = form.username.data.strip()
+        password = form.password.data.strip()
+
+        # Check if username is taken
+        existing_user = User.query.filter_by(username=username).first()
+        if existing_user:
+            flash('Username already exists. Please choose a different one.', 'danger')
+            return redirect(url_for('signup'))
+
+        # Create new user
+        new_user = User(username=username)
+        new_user.set_password(password)
+
+        # Check if any users exist
+        if User.query.count() == 0:
+            # This is the first user, make them admin
+            new_user.is_admin = True
+        db.session.add(new_user)
+        db.session.commit()
+
+        # Log the user in and redirect to home page
+        login_user(new_user)
+        flash('Account created successfully!', 'success')
+        return redirect(url_for('index'))
+
+    return render_template('signup.html', form=form)
+
+# Route: Login
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    if current_user.is_authenticated:
+        return redirect(url_for('index'))
+
+    form = LoginForm()
+    if form.validate_on_submit():
+        username = form.username.data.strip()
+        password = form.password.data.strip()
+
+        # Authenticate user
+        user = User.query.filter_by(username=username).first()
+        if user and user.check_password(password):
+            login_user(user)
+            flash('Logged in successfully!', 'success')
+            return redirect(url_for('index'))
+        else:
+            flash('Invalid username or password.', 'danger')
+            return redirect(url_for('login'))
+
+    return render_template('login.html', form=form)
+
+# Route: Logout
+@app.route('/logout')
+@login_required
+def logout():
+    logout_user()
+    flash('You have been logged out.', 'info')
+    return redirect(url_for('index'))
+
+# Route: Add Test
+@app.route('/add', methods=['GET', 'POST'])
+@login_required
+def add_test():
+    form = AddTestForm()
+    if form.validate_on_submit():
+        book_title = form.book_title.data.strip()
+        test_name = form.test_name.data.strip()
+        test_content = form.test_content.data.strip()
+        time_limit = form.time_limit.data
+
+        # Check if the book exists
+        book = Book.query.filter_by(title=book_title).first()
+        if not book:
+            # If the book doesn't exist, create it
+            book = Book(title=book_title)
+            db.session.add(book)
+            db.session.commit()
+
+        # Create the new test
+        new_test = Test(
+            name=test_name,
+            content=test_content,
+            book=book,
+            time_limit=time_limit,
+            created_by=current_user.id
+        )
+        db.session.add(new_test)
+        db.session.commit()
+
+        flash('Test added successfully!', 'success')
+        return redirect(url_for('index'))
+
+    return render_template('add.html', form=form)
+
+# Route: Edit Test
+@app.route('/edit_test/<int:test_id>', methods=['GET', 'POST'])
+@login_required
+def edit_test(test_id):
+    test = Test.query.get_or_404(test_id)
+    if not current_user.is_admin and test.created_by != current_user.id:
+        abort(403)
+
+    form = EditTestForm(obj=test)
+    if form.validate_on_submit():
+        test_name = form.test_name.data.strip()
+        test_content = form.test_content.data.strip()
+        time_limit = form.time_limit.data
+
+        # Update test details
+        test.name = test_name
+        test.content = test_content
+        test.time_limit = time_limit
+        db.session.commit()
+        # Continue from where the previous file ends
+
+        flash('Test updated successfully!', 'success')
+        return redirect(url_for('index'))
+
+    return render_template('edit_test.html', form=form, test=test)
+
+# Route: Delete Test
+@app.route('/delete_test/<int:test_id>', methods=['POST'])
+@login_required
+def delete_test(test_id):
+    test = Test.query.get_or_404(test_id)
+    if not current_user.is_admin and test.created_by != current_user.id:
+        abort(403)
+
+    db.session.delete(test)
+    db.session.commit()
+    flash('Test deleted successfully!', 'success')
+    return redirect(url_for('index'))
+
+# Route: Take and Submit Test
+@app.route('/test/<int:test_id>', methods=['GET', 'POST'])
+@login_required
+def take_test(test_id):
+    test = Test.query.get_or_404(test_id)
+    test_content = test.content
+    time_limit = test.time_limit  # Time limit in minutes
+
+    # Initialize variables
+    processed_content = []
+    correct_answers = {}
+    question_counter = 1
+
+    # Function to replace answers with input fields or dropdowns
+    def replace_answers(line):
+        nonlocal question_counter
+        dropdown_pattern = r'#\s*\[([^\]]+)\]\s*([^\#]+)\s*#'
+        input_pattern = r'\[([^\]]+)\]'
+
+        def dropdown_repl(match):
+            nonlocal question_counter
+            options_str = match.group(1)
+            correct_answer = match.group(2).strip()
+            options = [opt.strip() for opt in options_str.split(',')]
+            qid = f'q{question_counter}'
+            correct_answers[qid] = correct_answer
+            question_counter += 1
+
+            if request.method == 'POST':
+                user_answer = request.form.get(qid, '').strip().lower()
+                select_class = 'custom-select correct' if user_answer == correct_answer.lower() else 'custom-select incorrect'
+                disabled = 'disabled'
+            else:
+                select_class = 'custom-select'
+                disabled = ''
+
+            select_html = f'<select name="{qid}" class="{select_class}" {disabled} style="display: inline-block; width: auto;">'
+            for option in options:
+                selected = 'selected' if request.method == 'POST' and user_answer == option.strip().lower() else ''
+                select_html += f'<option value="{option}" {selected}>{option}</option>'
+            select_html += '</select>'
+
+            if request.method == 'POST' and user_answer != correct_answer.lower():
+                select_html += f' <span class="correct-answer">(Correct answer: {correct_answer})</span>'
+
+            return select_html
+
+        def input_repl(match):
+            nonlocal question_counter
+            correct_answer = match.group(1).strip()
+            qid = f'q{question_counter}'
+            correct_answers[qid] = correct_answer
+            question_counter += 1
+
+            if request.method == 'POST':
+                user_answer = request.form.get(qid, '')
+                input_class = 'form-control correct' if user_answer.strip().lower() == correct_answer.lower() else 'form-control incorrect'
+                readonly = 'readonly'
+            else:
+                input_class = 'form-control'
+                readonly = ''
+
+            input_html = f'<input type="text" name="{qid}" value="{user_answer if request.method == "POST" else ""}" class="{input_class}" style="width: auto;" {readonly}>'
+
+            if request.method == 'POST' and user_answer.strip().lower() != correct_answer.lower():
+                input_html += f' <span class="correct-answer">(Correct answer: {correct_answer})</span>'
+
+            return input_html
+
+        # Process the line
+        line = re.sub(dropdown_pattern, dropdown_repl, line)
+        line = re.sub(input_pattern, input_repl, line)
+        return line
+
+    # Process each line in test content
+    for line in test_content.splitlines():
+        processed_line = replace_answers(line)
+        processed_content.append(processed_line)
+
+    score = 0
+    total_questions = question_counter - 1
+
+    if request.method == 'POST':
+        # Time limit enforcement
+        start_time_str = session.get(f'start_time_{test_id}')
+        if not start_time_str:
+            flash('Test session expired. Please start the test again.', 'danger')
+            return redirect(url_for('take_test', test_id=test_id))
+        else:
+            start_time = datetime.fromisoformat(start_time_str)
+            elapsed_time = datetime.now(timezone.utc) - start_time
+            elapsed_minutes = elapsed_time.total_seconds() / 60
+
+            if time_limit and elapsed_minutes > time_limit:
+                flash('Time limit exceeded. Test submitted automatically.', 'warning')
+
+        # Calculate score
+        for qid, correct_answer in correct_answers.items():
+            user_answer = request.form.get(qid, '')
+            if user_answer.strip().lower() == correct_answer.lower():
+                score += 1
+
+        # Save test result
+        test_result = TestResult(
+            score=score,
+            total_questions=total_questions,
+            user_id=current_user.id,
+            test_id=test.id
+        )
+        db.session.add(test_result)
+        db.session.commit()
+
+        # Clear session
+        session.pop(f'start_time_{test_id}', None)
+
+        flash(f'You scored {score} out of {total_questions}!', 'info')
+        return render_template(
+            'take_test.html',
+            test=test,
+            processed_content=processed_content,
+            score=score,
+            total=total_questions,
+            time_limit=time_limit
+        )
+
+    else:
+        # GET request: Start test, store start time in session
+        session[f'start_time_{test_id}'] = datetime.now(timezone.utc).isoformat()
+
+        return render_template(
+            'take_test.html',
+            test=test,
+            processed_content=processed_content,
+            score=None,
+            total=total_questions,
+            time_limit=time_limit
+        )
+
+
+@app.route('/search')
+def search():
+    query = request.args.get('query', '').strip()
+    search_option = request.args.get('search_option', 'books')
+
+    if not query:
+        flash('Please enter a search term.', 'warning')
+        return redirect(url_for('index'))
+
+    if search_option == 'books':
+        # Search for books by title
+        books = Book.query.filter(Book.title.ilike(f'%{query}%')).all()
+        return render_template('search_results.html', books=books, query=query, search_option=search_option)
+    else:
+        # Search for tests by name
+        tests = Test.query.filter(Test.name.ilike(f'%{query}%')).all()
+        return render_template('search_results.html', tests=tests, query=query, search_option=search_option)
+
+
+@app.route('/learn/<int:test_id>', methods=['GET', 'POST'])
+@login_required
+def learn_test(test_id):
+    test = Test.query.get_or_404(test_id)
+    test_content = test.content
+
+    # Initialize variables
+    processed_content = []
+    correct_answers = {}
+    question_counter = 1
+    user_correct = {}
+
+    # Function to replace answers with input fields or dropdowns
+    def replace_answers(line):
+        nonlocal question_counter
+        dropdown_pattern = r'#\s*\[([^\]]+)\]\s*([^\#]+)\s*#'
+        input_pattern = r'\[([^\]]+)\]'
+
+        def dropdown_repl(match):
+            nonlocal question_counter
+            options_str = match.group(1)
+            correct_answer = match.group(2).strip()
+            options = [opt.strip() for opt in options_str.split(',')]
+            qid = f'q{question_counter}'
+            correct_answers[qid] = correct_answer
+            question_counter += 1
+
+            select_class = 'custom-select'
+            user_answer = request.form.get(qid, '').strip().lower() if request.method == 'POST' else ''
+            
+            # Check if user's answer is correct
+            if user_answer == correct_answer.lower():
+                user_correct[qid] = True
+                select_class += ' correct'
+            else:
+                user_correct[qid] = False
+
+            select_html = f'<select name="{qid}" class="{select_class}">'
+            for option in options:
+                selected = 'selected' if request.method == 'POST' and user_answer == option.strip().lower() else ''
+                select_html += f'<option value="{option}" {selected}>{option}</option>'
+            select_html += '</select>'
+
+            return select_html
+
+        def input_repl(match):
+            nonlocal question_counter
+            correct_answer = match.group(1).strip()
+            qid = f'q{question_counter}'
+            correct_answers[qid] = correct_answer
+            question_counter += 1
+
+            user_answer = request.form.get(qid, '').strip().lower() if request.method == 'POST' else ''
+            input_class = 'form-control'
+
+            # Check if user's answer is correct
+            if user_answer == correct_answer.lower():
+                user_correct[qid] = True
+                input_class += ' correct'
+            else:
+                user_correct[qid] = False
+
+            input_html = f'<input type="text" name="{qid}" value="{user_answer}" class="{input_class}">'
+
+            return input_html
+
+        # Process the line
+        line = re.sub(dropdown_pattern, dropdown_repl, line)
+        line = re.sub(input_pattern, input_repl, line)
+        return line
+
+    # Process each line in test content
+    for line in test_content.splitlines():
+        processed_line = replace_answers(line)
+        processed_content.append(processed_line)
+
+    if request.method == 'POST':
+        # Check if all answers are correct
+        all_correct = all(user_correct.values())
+        if all_correct:
+            flash('You have answered everything correctly! You can now proceed.', 'success')
+        else:
+            flash('Some answers are incorrect or missing. Please try again.', 'danger')
+
+    return render_template(
+        'learn_test.html',
+        test_name=test.name,
+        processed_content=processed_content
+    )
+
+
+@app.route('/my_vocabulary')
+@login_required
+def my_vocabulary():
+    vocab_words = Vocabulary.query.filter_by(user_id=current_user.id).all()
+    return render_template('vocabulary.html', vocab_words=vocab_words)
+
+
+@app.route('/add_to_vocabulary', methods=['POST'])
+@login_required
+def add_to_vocabulary():
+    data = request.get_json()
+    word = data.get('word')
+    translation = data.get('translation')
+
+    # Ensure that word and translation are not None or empty
+    if not word or not translation:
+        return jsonify({'success': False, 'error': 'Invalid data: word or translation is missing'}), 400
+
+    try:
+        # Add word to user's vocabulary
+        new_vocab = Vocabulary(word=word, translation=translation, user_id=current_user.id)
+        db.session.add(new_vocab)
+        db.session.commit()
+        return jsonify({'success': True})
+
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/autocomplete_search')
+def autocomplete_search():
+    query = request.args.get('query', '').strip()
+    search_option = request.args.get('search_option', 'books')
+
+    results = []
+
+    if query:
+        if search_option == 'books':
+            # Search for matching books by title
+            books = Book.query.filter(Book.title.ilike(f'%{query}%')).all()
+            results = [{'label': book.title, 'value': book.title} for book in books]
+        elif search_option == 'tests':
+            # Search for matching tests by name
+            tests = Test.query.filter(Test.name.ilike(f'%{query}%')).all()
+            results = [{'label': test.name, 'value': test.name} for test in tests]
+
+    return jsonify(results)
+
+
+# Route: Admin Panel
+@app.route('/admin')
+@app.route('/admin')
+@admin_required
+def admin_panel():
+    test_results = TestResult.query.order_by(TestResult.timestamp.desc()).all()
+    learn_test_results = LearnTestResult.query.order_by(LearnTestResult.completed_at.desc()).all()
+    return render_template(
+        'admin_panel.html', 
+        test_results=test_results,
+        learn_test_results=learn_test_results
+    )
+
+# Run the Flask app
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=3000, debug=True)
+
+
+
+--- End of ./combined_files.txt ---
+
+
+
+--- Start of ./forms.py ---
+
+# forms.py
+
+from flask_wtf import FlaskForm
+from wtforms import StringField, PasswordField, SubmitField, TextAreaField, IntegerField
+from wtforms.validators import DataRequired, Length, NumberRange, Optional
+
+class SignupForm(FlaskForm):
+    username = StringField('Username', validators=[DataRequired(), Length(min=3, max=150)])
+    password = PasswordField('Password', validators=[DataRequired(), Length(min=6)])
+    submit = SubmitField('Sign Up')
+
+class LoginForm(FlaskForm):
+    username = StringField('Username', validators=[DataRequired(), Length(min=3, max=150)])
+    password = PasswordField('Password', validators=[DataRequired()])
+    submit = SubmitField('Login')
+
+class AddTestForm(FlaskForm):
+    book_title = StringField('Book Title', validators=[DataRequired(), Length(min=1, max=150)])
+    test_name = StringField('Test Name', validators=[DataRequired(), Length(min=1, max=150)])
+    time_limit = IntegerField('Time Limit (minutes)', validators=[Optional(), NumberRange(min=1)])
+    test_content = TextAreaField('Test Content', validators=[DataRequired()])
+    submit = SubmitField('Add Test')
+
+class EditTestForm(FlaskForm):
+    test_name = StringField('Test Name', validators=[DataRequired(), Length(min=1, max=150)])
+    time_limit = IntegerField('Time Limit (minutes)', validators=[Optional(), NumberRange(min=1)])
+    test_content = TextAreaField('Test Content', validators=[DataRequired()])
+    submit = SubmitField('Update Test')
+
+
+--- End of ./forms.py ---
+
+
+
+--- Start of ./static/styles.css ---
+
+/* General body styling */
+body {
+  font-family: 'Helvetica Neue', Arial, sans-serif;
+  background-color: #f8f9fa; /* Light background */
+  color: #333;
+}
+
+/* Navbar customization */
+.navbar {
+  background-color: #007bff; /* Bootstrap primary color */
+}
+
+.navbar-brand, .nav-link {
+  color: rgb(71, 69, 69) !important;
+  font-weight: bold;
+}
+
+.navbar-brand:hover, .nav-link:hover {
+  color: #e9ecef !important; /* Lighter color on hover */
+}
+
+/* Container padding */
+.container {
+  padding-top: 20px;
+  padding-bottom: 20px;
+}
+
+/* Card styling */
+.card {
+  border: 1px solid #ddd;
+  border-radius: 8px;
+  transition: transform 0.2s ease-in-out;
+}
+
+.card:hover {
+  transform: scale(1.05); /* Slight zoom on hover */
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1); /* Light shadow on hover */
+}
+
+.card-title {
+  font-size: 1.25rem; /* Slightly larger title font */
+  font-weight: bold;
+}
+
+.card-text {
+  font-size: 1rem;
+}
+
+/* Button styling */
+.btn {
+  font-size: 1rem;
+  padding: 10px 15px;
+  border-radius: 5px;
+}
+
+.btn-primary {
+  background-color: #007bff;
+  border-color: #007bff;
+}
+
+.btn-primary:hover {
+  background-color: #0056b3;
+  border-color: #0056b3;
+}
+
+/* jQuery UI Autocomplete Styling */
+.ui-autocomplete {
+  background-color: white;
+  border: 1px solid #ddd;
+  font-size: 1rem; /* Adjust font size for better visibility */
+  z-index: 1051; /* Ensure the dropdown appears above other content */
+  max-height: 200px; /* Limit height of dropdown */
+  overflow-y: auto; /* Enable scrolling if there are too many suggestions */
+  border-radius: 5px; /* Rounded corners for dropdown */
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1); /* Add shadow to dropdown */
+}
+
+.ui-menu-item {
+  padding: 10px 15px;
+  border-bottom: 1px solid #ddd; /* Add separation between items */
+  cursor: pointer;
+}
+
+.ui-menu-item:hover {
+  background-color: #007bff; /* Bootstrap primary color */
+  color: white;
+}
+
+.ui-state-active {
+  background-color: #007bff; /* Active item background */
+  color: white;
+  font-weight: bold;
+}
+
+.ui-helper-hidden-accessible {
+  display: none;
+}
+
+/* Flash message styling */
+.alert {
+  margin-top: 15px;
+}
+
+.alert-success {
+  background-color: #28a745;
+  color: white;
+}
+
+.alert-danger {
+  background-color: #dc3545;
+  color: white;
+}
+
+/* Form styling */
+.form-inline .form-group {
+  margin-right: 10px;
+}
+
+input.form-control, select.form-control {
+  width: auto;
+  display: inline-block;
+  vertical-align: middle;
+}
+
+/* Footer styling */
+footer {
+  background-color: #007bff;
+  color: white;
+  padding: 20px 0;
+  text-align: center;
+}
+
+/* Custom styles to improve usability on smartphones */
+@media (max-width: 768px) {
+  .container {
+    padding-left: 15px;
+    padding-right: 15px;
+  }
+  
+  .card-title {
+    font-size: 1.2rem; /* Make text slightly larger for mobile */
+  }
+
+  .btn {
+    font-size: 1rem; /* Ensure buttons are easily clickable */
+    padding: 10px 15px;
+  }
+
+  footer {
+    padding: 10px 0; /* Add more padding on mobile */
+  }
+}
+
+/* Desktop hover effects for cards */
+@media (min-width: 769px) {
+  .card {
+    transition: transform 0.2s ease-in-out;
+  }
+
+  .card:hover {
+    transform: scale(1.05); /* Add a hover effect on desktop */
+  }
+}
+
+.correct-answer {
+  color: green;
+  font-weight: bold;
+}
+
+.incorrect {
+  border: 2px solid red;
+}
+
+.correct {
+  border: 2px solid green;
+  color: green;
+}
+
+#translation-popup {
+  background-color: white;
+  border: 1px solid #ddd;
+  padding: 10px;
+  border-radius: 5px;
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+  z-index: 1000; /* Ensure it appears above other elements */
+}
+
+
+
+
+--- End of ./static/styles.css ---
+
+
+
+--- Start of ./templates/third_review.html ---
+
+{% extends "base.html" %}
+
+{% block title %}Third Review{% endblock %}
+
+{% block content %}
+  <h1 class="my-4">Third Review</h1>
+
+  <p><strong>Unscramble the following word:</strong></p>
+  <p>Ukrainian Word: {{ word }}</p>
+  <p>Scrambled English Word: <strong>{{ scrambled_word }}</strong></p>
+
+  <form id="review-form">
+    <div class="form-group">
+      <label for="unscrambled">Your Answer:</label>
+      <input type="text" id="unscrambled" class="form-control" name="unscrambled">
+    </div>
+    <button type="submit" class="btn btn-primary mt-3">Submit</button>
+  </form>
+
+  <div id="result" class="mt-3"></div>
+{% endblock %}
+
+{% block scripts %}
+  <script>
+    document.getElementById('review-form').addEventListener('submit', function(event) {
+      event.preventDefault();
+      const userAnswer = document.getElementById('unscrambled').value.trim().toLowerCase();
+      const correctAnswer = "{{ correct_word }}".toLowerCase();
+
+      let resultText;
+      if (userAnswer === correctAnswer) {
+        resultText = "<span class='text-success'>Correct!</span>";
+      } else {
+        resultText = `<span class='text-danger'>Incorrect! The correct answer was: {{ correct_word }}</span>`;
+      }
+
+      document.getElementById('result').innerHTML = resultText;
+    });
+  </script>
+{% endblock %}
+
+
+--- End of ./templates/third_review.html ---
+
+
+
+--- Start of ./templates/index.html ---
+
+{% extends "base.html" %}
+
+{% block title %}Home - Test App{% endblock %}
+
+{% block content %}
+  <h1 class="my-4 text-center">Search for Books or Tests</h1>
+
+  <form method="GET" action="{{ url_for('search') }}" class="form-inline justify-content-center mb-4">
+    <div class="form-group">
+      <label for="search_query" class="sr-only">Search</label> 
+      <input type="text" name="query" id="search_query" class="form-control" placeholder="Search for books or tests" required>
+    </div>
+    <div class="form-group mx-2">
+      <label for="search_option" class="sr-only">Search Option</label> 
+      <select name="search_option" id="search_option" class="form-control">
+        <option value="books">Books</option>
+        <option value="tests">Tests</option>
+      </select>
+    </div>
+    <button type="submit" class="btn btn-primary">Search</button>
+  </form>
+
+  <h2 class="my-4 text-center">Available Books</h2>
+
+  <div class="row">
+    {% for book in books %}
+      <div class="col-12 col-md-6 mb-4">
+        <div class="card h-100 shadow-sm">
+          <div class="card-body">
+            <h5 class="card-title">{{ book.title }}</h5>
+            <p class="card-text">Number of tests: {{ book.tests|length }}</p>
+            <a href="{{ url_for('book_tests', book_id=book.id) }}" class="btn btn-primary btn-block">View Tests</a>
+          </div>
+        </div>
+      </div>
+    {% else %}
+      <p class="text-center">No books available.</p>
+    {% endfor %}
+  </div>
+{% endblock %}
+
+{% block scripts %}
+  {{ super() }}
+
+  <script src="https://code.jquery.com/ui/1.12.1/jquery-ui.js"></script>
+
+  <script>
+    $(function() {
+      $('#search_query').autocomplete({
+        source: function(request, response) {
+          const searchOption = $('#search_option').val();
+          $.ajax({
+            url: "{{ url_for('autocomplete_search') }}",
+            data: {
+              query: request.term,
+              search_option: searchOption
+            },
+            success: function(data) {
+              response(data);
+            }
+          });
+        },
+        minLength: 2
+      });
+    });
+  </script>
+{% endblock %}
+
+--- End of ./templates/index.html ---
+
+
+
+--- Start of ./templates/admin_panel.html ---
+
+{% extends "base.html" %}
+
+{% block title %}Admin Panel - Test App{% endblock %}
+
+{% block content %}
+  <h1 class="my-4">Admin Panel</h1>
+
+  <div class="row">
+    <!-- Test Results Section -->
+    <div class="col-md-6">
+      <h2>Test Results</h2>
+      <table class="table table-striped">
+        <thead>
+          <tr>
+            <th>User</th>
+            <th>Test</th>
+            <th>Score</th>
+            <th>Total Questions</th>
+            <th>Timestamp</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for result in test_results %}
+            <tr>
+              <td>{{ result.user.username }}</td>
+              <td>{{ result.test.name }}</td>
+              <td>{{ result.score }}</td>
+              <td>{{ result.total_questions }}</td>
+              <td>{{ result.timestamp.strftime('%Y-%m-%d %H:%M:%S') }}</td>
+            </tr>
+          {% else %}
+            <tr>
+              <td colspan="5">No test results found.</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Learn Test Completions Section -->
+    <div class="col-md-6">
+      <h2>Learn Test Completions</h2>
+      <table class="table table-striped">
+        <thead>
+          <tr>
+            <th>User</th>
+            <th>Test</th>
+            <th>Completed At</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for result in learn_test_results %}
+            <tr>
+              <td>{{ result.user.username }}</td>
+              <td>{{ result.test.name }}</td>
+              <td>{{ result.completed_at.strftime('%Y-%m-%d %H:%M:%S') }}</td>
+            </tr>
+          {% else %}
+            <tr>
+              <td colspan="3">No learn tests completed yet.</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <a href="{{ url_for('index') }}" class="btn btn-link">Back to Home</a>
+{% endblock %}
+
+
+--- End of ./templates/admin_panel.html ---
+
+
+
+--- Start of ./templates/due_reviews.html ---
+
+{% extends "base.html" %}
+
+{% block title %}Review Due Words{% endblock %}
+
+{% block content %}
+  <h1 class="my-4">Words Due for Review</h1>
+
+  {% if due_words %}
+    <ul>
+      {% for word in due_words %}
+        <li>
+          <strong>{{ word.translation }}</strong> ({{ word.word }}) 
+          <form action="{{ url_for('process_fourth_review') }}" method="POST">
+            <input type="hidden" name="word_id" value="{{ word.id }}">
+            <input type="text" name="translation" placeholder="Enter the English word" required>
+            <button type="submit" class="btn btn-sm btn-primary">Review</button>
+          </form>
+        </li>
+      {% endfor %}
+    </ul>
+  {% else %}
+    <p>No words due for review today!</p>
+  {% endif %}
+{% endblock %}
+
+
+--- End of ./templates/due_reviews.html ---
+
+
+
+--- Start of ./templates/take_test.html ---
+
+{% extends "base.html" %}
+
+{% block title %}Take Test - {{ test.name }}{% endblock %}
+
+{% block content %}
+  <h1 class="my-4">{{ test.name }}</h1>
+
+  {% if time_limit %}
+    <div class="alert alert-info" id="timer">
+      Time Remaining: <span id="time">Loading...</span>
+    </div>
+  {% endif %}
+
+  <form method="post">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}"/>
+   
+    
+    {% for line in processed_content %}
+      <p>{{ line | safe }}</p>
+    {% endfor %}
+    <button type="submit" class="btn btn-primary">Submit Test</button>
+</form>
+
+  {% if score is not none %}
+    <h2 class="my-4">Your Score: {{ score }} / {{ total }}</h2>
+  {% endif %}
+
+  <a href="{{ url_for('index') }}" class="btn btn-link">Back to Home</a>
+{% endblock %}
+
+{% block scripts %}
+  {{ super() }}
+  {% if time_limit %}
+  <script>
+    var timeLimit = {{ time_limit|default('null')|tojson }};
+    if (timeLimit !== null) {
+      var endTime = new Date().getTime() + timeLimit * 60 * 1000;
+      var x = setInterval(function() {
+        var now = new Date().getTime();
+        var distance = endTime - now;
+
+        var minutes = Math.floor((distance % (1000 * 60 * 60)) / (1000 * 60));
+        var seconds = Math.floor((distance % (1000 * 60)) / 1000);
+
+        document.getElementById("time").innerHTML = minutes + "m " + seconds + "s ";
+
+        if (distance <= 0) {
+          clearInterval(x);
+          document.querySelector("form").submit();
+        }
+      }, 1000);
+    } else {
+      document.getElementById("timer").style.display = 'none';
+    }
+  </script>
+  {% endif %}
+{% endblock %}
+
+--- End of ./templates/take_test.html ---
+
+
+
+--- Start of ./templates/vocabulary.html ---
+
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css">
+{% extends "base.html" %}
+
+{% block title %}My Vocabulary{% endblock %}
+
+{% block content %}
+  <h1 class="my-4">My Vocabulary</h1>
+  <ul>
+    {% for vocab in vocab_words %}
+      <li>
+        <strong>{{ vocab.word }}:</strong> {{ vocab.translation }}
+
+        <!-- Generate pronunciation dynamically using TTS -->
+        <button class="btn btn-secondary" onclick="playPronunciation('{{ vocab.word }}')">
+          <i class="fas fa-volume-up"></i>
+        </button>
+      </li>
+    {% else %}
+      <p>No words in your vocabulary yet.</p>
+    {% endfor %}
+  </ul>
+{% endblock %}
+
+{% block scripts %}
+  <script>
+    // Function to fetch and play pronunciation using dynamic TTS URL
+    function playPronunciation(word) {
+      const ttsUrl = `/tts?text=${encodeURIComponent(word)}&lang=en`;
+      const audio = new Audio(ttsUrl);
+      audio.play();
+    }
+  </script>
+{% endblock %}
+
+
+--- End of ./templates/vocabulary.html ---
+
+
+
+--- Start of ./templates/signup.html ---
+
+<!-- templates/signup.html -->
+{% extends "base.html" %}
+
+{% block title %}Sign Up - Test App{% endblock %}
+
+{% block content %}
+  <h1 class="my-4">Sign Up</h1>
+  <form method="post">
+    {{ form.hidden_tag() }}
+    <div class="form-group">
+      {{ form.username.label }}
+      {{ form.username(class="form-control") }}
+    </div>
+    <div class="form-group">
+      {{ form.password.label }}
+      {{ form.password(class="form-control") }}
+    </div>
+    {{ form.submit(class="btn btn-primary") }}
+    <a href="{{ url_for('login') }}" class="btn btn-link">Login</a>
+  </form>
+{% endblock %}
+
+
+--- End of ./templates/signup.html ---
+
+
+
+--- Start of ./templates/first_review.html ---
+
+{% extends "base.html" %}
+
+{% block title %}First Review{% endblock %}
+
+{% block content %}
+  <h1 class="my-4">First Review</h1>
+
+  <p><strong>Translate the following word:</strong> {{ word }}</p>
+
+  <form id="review-form">
+    {% for option in options %}
+      <div class="form-check">
+        <input class="form-check-input" type="radio" name="answer" value="{{ option }}" id="{{ option }}">
+        <label class="form-check-label" for="{{ option }}">
+          {{ option }}
+        </label>
+      </div>
+    {% endfor %}
+
+    <button type="submit" class="btn btn-primary mt-3">Submit</button>
+  </form>
+
+  <div id="result" class="mt-3"></div>
+{% endblock %}
+
+{% block scripts %}
+  <script>
+    document.getElementById('review-form').addEventListener('submit', function(event) {
+      event.preventDefault();
+      const selectedOption = document.querySelector('input[name="answer"]:checked').value;
+      const correctAnswer = "{{ correct_translation }}";
+
+      let resultText;
+      if (selectedOption === correctAnswer) {
+        resultText = "<span class='text-success'>Correct!</span>";
+      } else {
+        resultText = `<span class='text-danger'>Incorrect! The correct answer was: {{ correct_translation }}</span>`;
+      }
+
+      document.getElementById('result').innerHTML = resultText;
+    });
+  </script>
+{% endblock %}
+
+
+--- End of ./templates/first_review.html ---
+
+
+
+--- Start of ./templates/search_results.html ---
+
+{% extends "base.html" %}
+
+{% block title %}Search Results - Test App{% endblock %}
+
+{% block content %}
+  <h1 class="my-4 text-center">Search Results for "{{ query }}"</h1>
+
+  {% if search_option == 'books' %}
+    <h2 class="my-4 text-center">Books</h2>
+    <div class="row">
+      {% if books %}
+        {% for book in books %}
+          <div class="col-12 col-md-6 mb-4">
+            <div class="card h-100 shadow-sm">
+              <div class="card-body">
+                <h5 class="card-title">{{ book.title }}</h5>
+                <p class="card-text">Number of tests: {{ book.tests|length }}</p>
+                <a href="{{ url_for('book_tests', book_id=book.id) }}" class="btn btn-primary btn-block">View Tests</a>
+              </div>
+            </div>
+          </div>
+        {% endfor %}
+      {% else %}
+        <p class="text-center">No books found for "{{ query }}".</p>
+      {% endif %}
+    </div>
+  {% elif search_option == 'tests' %}
+    <h2 class="my-4 text-center">Tests</h2>
+    <div class="row">
+      {% if tests %}
+        {% for test in tests %}
+          <div class="col-12 col-md-6 mb-4">
+            <div class="card h-100 shadow-sm">
+              <div class="card-body">
+                <h5 class="card-title">{{ test.name }}</h5>
+                <p class="card-text">Book: {{ test.book.title }}</p>
+                <a href="{{ url_for('take_test', test_id=test.id) }}" class="btn btn-primary btn-block">Take Test</a>
+              </div>
+            </div>
+          </div>
+        {% endfor %}
+      {% else %}
+        <p class="text-center">No tests found for "{{ query }}".</p>
+      {% endif %}
+    </div>
+  {% endif %}
+{% endblock %}
+
+
+--- End of ./templates/search_results.html ---
+
+
+
+--- Start of ./templates/csrf_error.html ---
+
+{% extends "base.html" %}
+
+{% block title %}CSRF Error{% endblock %}
+
+{% block content %}
+  <h1 class="my-4">Form Submission Error</h1>
+  <div class="alert alert-danger">
+    {{ reason }}
+  </div>
+  <a href="{{ url_for('index') }}" class="btn btn-primary">Back to Home</a>
+{% endblock %}
+
+
+--- End of ./templates/csrf_error.html ---
+
+
+
+--- Start of ./templates/base.html ---
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>{% block title %}Test App{% endblock %}</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+  <!-- Bootstrap CSS -->
+  <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css">
+  <!-- Custom CSS -->
+  <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+</head>
+<body>
+  <!-- Navbar -->
+  <nav class="navbar navbar-expand-lg navbar-light bg-light">
+    <a class="navbar-brand" href="{{ url_for('index') }}">Test App</a>
+    <button class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarNav" aria-controls="navbarNav" aria-expanded="false" aria-label="Toggle navigation">
+      <span class="navbar-toggler-icon"></span>
+    </button>
+    <div class="collapse navbar-collapse" id="navbarNav">
+      <ul class="navbar-nav mr-auto">
+        {% if current_user.is_authenticated %}
+          <li class="nav-item">
+            <a class="nav-link" href="{{ url_for('add_test') }}">Add Test</a>
+          </li>
+          <li class="nav-item">
+            <a class="nav-link" href="{{ url_for('learn_test', test_id=1) }}">Learn</a> <!-- Example: Adjust test_id accordingly -->
+          </li>
+          <li class="nav-item">
+            <a class="nav-link" href="{{ url_for('my_vocabulary') }}">Vocabulary</a> <!-- New Vocabulary link -->
+          </li>
+          {% if current_user.is_admin %}
+            <li class="nav-item">
+              <a class="nav-link" href="{{ url_for('admin_panel') }}">Admin Panel</a>
+            </li>
+          {% endif %}
+        {% endif %}
+      </ul>
+      <ul class="navbar-nav ml-auto">
+        {% if current_user.is_authenticated %}
+          <li class="nav-item">
+            <span class="navbar-text">Hello, {{ current_user.username }}!</span>
+          </li>
+          <li class="nav-item">
+            <a class="nav-link" href="{{ url_for('logout') }}">Logout</a>
+          </li>
+        {% else %}
+          <li class="nav-item">
+            <a class="nav-link" href="{{ url_for('login') }}">Login</a>
+          </li>
+          <li class="nav-item">
+            <a class="nav-link" href="{{ url_for('signup') }}">Sign Up</a>
+          </li>
+        {% endif %}
+      </ul>
+    </div>
+  </nav>
+
+  <!-- Main container -->
+  <div class="container mt-4">
+    <!-- Flash messages -->
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        <div class="alert-container">
+          {% for category, message in messages %}
+            <div class="alert alert-{{ category }} mt-3">{{ message }}</div>
+          {% endfor %}
+        </div>
+      {% endif %}
+    {% endwith %}
+
+    <!-- Content block -->
+    {% block content %}{% endblock %}
+  </div>
+
+  <!-- Footer -->
+  <footer class="bg-light text-center py-3 mt-4">
+    <p>© Test App 2024</p>
+  </footer>
+
+  <!-- Scripts block -->
+  {% block scripts %}
+    <script src="https://code.jquery.com/jquery-3.5.1.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@4.5.2/dist/js/bootstrap.bundle.min.js"></script>
+  {% endblock %}
+</body>
+</html>
+
+
+--- End of ./templates/base.html ---
+
+
+
+--- Start of ./templates/fourth_review.html ---
+
+{% extends "base.html" %}
+
+{% block title %}Fourth Review{% endblock %}
+
+{% block content %}
+  <h1 class="my-4">Fourth Review</h1>
+
+  <p><strong>Translate the following word:</strong></p>
+  <p>Ukrainian Word: {{ word }}</p>
+
+  <form id="review-form">
+    <div class="form-group">
+      <label for="translation">Your Answer (English):</label>
+      <input type="text" id="translation" class="form-control" name="translation">
+    </div>
+    <button type="submit" class="btn btn-primary mt-3">Submit</button>
+  </form>
+
+  <div id="result" class="mt-3"></div>
+{% endblock %}
+
+{% block scripts %}
+  <script>
+    document.getElementById('review-form').addEventListener('submit', function(event) {
+      event.preventDefault();
+      const userAnswer = document.getElementById('translation').value.trim().toLowerCase();
+      const correctAnswer = "{{ correct_word }}".toLowerCase();
+
+      let resultText;
+      if (userAnswer === correctAnswer) {
+        resultText = "<span class='text-success'>Correct!</span>";
+      } else {
+        resultText = `<span class='text-danger'>Incorrect! The correct answer was: {{ correct_word }}</span>`;
+      }
+
+      document.getElementById('result').innerHTML = resultText;
+    });
+  </script>
+{% endblock %}
+
+
+--- End of ./templates/fourth_review.html ---
+
+
+
+--- Start of ./templates/second_review.html ---
+
+{% extends "base.html" %}
+
+{% block title %}Second Review{% endblock %}
+
+{% block content %}
+  <h1 class="my-4">Second Review</h1>
+
+  <p><strong>Translate the following word:</strong> {{ word }}</p>
+
+  <form id="review-form">
+    {% for option in options %}
+      <div class="form-check">
+        <input class="form-check-input" type="radio" name="answer" value="{{ option }}" id="{{ option }}">
+        <label class="form-check-label" for="{{ option }}">
+          {{ option }}
+        </label>
+      </div>
+    {% endfor %}
+
+    <button type="submit" class="btn btn-primary mt-3">Submit</button>
+  </form>
+
+  <div id="result" class="mt-3"></div>
+{% endblock %}
+
+{% block scripts %}
+  <script>
+    document.getElementById('review-form').addEventListener('submit', function(event) {
+      event.preventDefault();
+      const selectedOption = document.querySelector('input[name="answer"]:checked').value;
+      const correctAnswer = "{{ correct_word }}";
+
+      let resultText;
+      if (selectedOption === correctAnswer) {
+        resultText = "<span class='text-success'>Correct!</span>";
+      } else {
+        resultText = `<span class='text-danger'>Incorrect! The correct answer was: {{ correct_word }}</span>`;
+      }
+
+      document.getElementById('result').innerHTML = resultText;
+    });
+  </script>
+{% endblock %}
+
+
+--- End of ./templates/second_review.html ---
+
+
+
+--- Start of ./templates/login.html ---
+
+<!-- templates/login.html -->
+{% extends "base.html" %}
+
+{% block title %}Login - Test App{% endblock %}
+
+{% block content %}
+  <h1 class="my-4">Login</h1>
+  <form method="post">
+    {{ form.hidden_tag() }}
+    <div class="form-group">
+      {{ form.username.label }}
+      {{ form.username(class="form-control") }}
+    </div>
+    <div class="form-group">
+      {{ form.password.label }}
+      {{ form.password(class="form-control") }}
+    </div>
+    {{ form.submit(class="btn btn-primary") }}
+    <a href="{{ url_for('signup') }}" class="btn btn-link">Sign Up</a>
+  </form>
+{% endblock %}
+
+
+--- End of ./templates/login.html ---
+
+
+
+--- Start of ./templates/add.html ---
+
+<!-- templates/add.html -->
+{% extends "base.html" %}
+
+{% block title %}Add Test - Test App{% endblock %}
+
+{% block content %}
+  <h1 class="my-4">Add a New Test</h1>
+  <form method="post" action="{{ url_for('add_test') }}">
+    {{ form.hidden_tag() }}
+    
+    <div class="form-group">
+      {{ form.book_title.label }}
+      {{ form.book_title(class="form-control", id="book_title") }}
+    </div>
+    <div class="form-group">
+      {{ form.test_name.label }}
+      {{ form.test_name(class="form-control", id="test_name") }}
+    </div>
+    <div class="form-group">
+      {{ form.time_limit.label }}
+      {{ form.time_limit(class="form-control") }}
+    </div>
+    <div class="form-group">
+      {{ form.test_content.label }}
+      <!-- Removed the 'required' attribute from the textarea -->
+      {{ form.test_content(class="form-control", id="test_content", required=False) }}
+    </div>
+
+    {{ form.submit(class="btn btn-primary") }}
+    <a href="{{ url_for('index') }}" class="btn btn-link">Back to Home</a>
+  </form>
+{% endblock %}
+
+{% block scripts %}
+  {{ super() }}
+  <!-- jQuery -->
+  <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+  <!-- jQuery UI for autocomplete -->
+  <script src="https://code.jquery.com/ui/1.12.1/jquery-ui.min.js"></script>
+  <link rel="stylesheet" href="https://code.jquery.com/ui/1.12.1/themes/base/jquery-ui.css">
+
+  <!-- CKEditor 5 Classic Editor -->
+  <script src="https://cdn.ckeditor.com/ckeditor5/35.3.0/classic/ckeditor.js"></script>
+
+  <script>
+    // Custom Upload Adapter for CKEditor - Base64 Upload
+    function MyCustomUploadAdapterPlugin(editor) {
+      editor.plugins.get('FileRepository').createUploadAdapter = (loader) => {
+        return new MyUploadAdapter(loader);
+      };
+    }
+
+    class MyUploadAdapter {
+      constructor(loader) {
+        this.loader = loader;
+      }
+
+      upload() {
+        return this.loader.file
+          .then(file => new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve({ default: reader.result });
+            reader.onerror = error => reject(error);
+            reader.readAsDataURL(file);
+          }));
+      }
+
+      abort() {
+        // Handle abort if needed
+      }
+    }
+
+    // Initialize CKEditor with Base64 Image Upload Adapter
+    ClassicEditor.create(document.querySelector('#test_content'), {
+      extraPlugins: [MyCustomUploadAdapterPlugin], // Add the custom upload adapter
+      toolbar: {
+        items: [
+          'heading', '|', 'bold', 'italic', 'link', 'bulletedList', 'numberedList', 'blockQuote', 'insertTable', '|',
+          'imageUpload', 'mediaEmbed', '|', 'undo', 'redo'
+        ]
+      },
+      image: {
+        toolbar: ['imageTextAlternative'], // Removed imageStyle:full and imageStyle:side
+        upload: {
+          types: ['jpeg', 'png', 'gif', 'bmp', 'webp']
+        }
+      }
+    })
+    .then(editor => {
+        window.editor = editor;
+    })
+    .catch(error => {
+        console.error(error);
+    });
+
+    // Ensure CKEditor updates the textarea before form submission
+    document.querySelector('form').addEventListener('submit', function(e) {
+      document.querySelector('#test_content').value = window.editor.getData();
+    });
+
+    // Autocomplete for Book Title
+    $(function() {
+      $("#book_title").autocomplete({
+        source: function(request, response) {
+          $.ajax({
+            url: "{{ url_for('autocomplete_book') }}",
+            data: {
+              q: request.term
+            },
+            success: function(data) {
+              response(data);
+            }
+          });
+        },
+        minLength: 2
+      });
+
+      // Autocomplete for Test Name
+      $("#test_name").autocomplete({
+        source: function(request, response) {
+          $.ajax({
+            url: "{{ url_for('autocomplete_test') }}",
+            data: {
+              q: request.term
+            },
+            success: function(data) {
+              response(data);
+            }
+          });
+        },
+        minLength: 2
+      });
+    });
+  </script>
+{% endblock %}
+
+
+--- End of ./templates/add.html ---
+
+
+
+--- Start of ./templates/edit_test.html ---
+
+<!-- templates/edit_test.html -->
+{% extends "base.html" %}
+
+{% block title %}Edit Test - {{ test.name }}{% endblock %}
+
+{% block content %}
+  <h1 class="my-4">Edit Test - {{ test.name }}</h1>
+  <form method="post">
+    {{ form.hidden_tag() }}
+    <div class="form-group">
+      {{ form.test_name.label }}
+      {{ form.test_name(class="form-control") }}
+    </div>
+    <div class="form-group">
+      {{ form.time_limit.label }}
+      {{ form.time_limit(class="form-control") }}
+    </div>
+    <div class="form-group">
+      {{ form.test_content.label }}
+      {{ form.test_content(class="form-control", id="test_content") }}
+    </div>
+    {{ form.submit(class="btn btn-primary") }}
+    <a href="{{ url_for('index') }}" class="btn btn-link">Back to Home</a>
+  </form>
+{% endblock %}
+
+{% block scripts %}
+  {{ super() }}
+  <!-- CKEditor 5 Classic Editor -->
+  <script src="https://cdn.ckeditor.com/ckeditor5/35.3.0/classic/ckeditor.js"></script>
+
+  <script>
+    // Initialize CKEditor
+    ClassicEditor.create(document.querySelector('#test_content'))
+      .then(editor => {
+          window.editor = editor; // Save the editor instance for later use
+          editor.setData(document.querySelector('#test_content').value); // Set existing data
+      })
+      .catch(error => {
+          console.error(error);
+      });
+
+    // Ensure CKEditor updates the textarea before form submission
+    document.querySelector('form').addEventListener('submit', function(e) {
+      document.querySelector('#test_content').value = window.editor.getData();
+    });
+  </script>
+{% endblock %}
+
+
+--- End of ./templates/edit_test.html ---
+
+
+
+--- Start of ./templates/learn_test.html ---
+
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css">
+
+{% extends "base.html" %}
+
+{% block title %}Learn Test - {{ test_name }}{% endblock %}
+
+{% block content %}
+  <h1 class="my-4">{{ test_name }}</h1>
+
+  <form method="post">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}"/>
+    
+    <!-- Render the test content -->
+    <div id="test-content">
+      {% for line in processed_content %}
+        <p>{{ line | safe }}</p>
+      {% endfor %}
+    </div>
+
+    <button type="submit" class="btn btn-primary">Check Answers</button>
+  </form>
+
+  <!-- Translation and pronunciation popup -->
+  <div id="translation-popup" style="display: none; position: absolute; background: #f9f9f9; border: 1px solid #ccc; padding: 10px; z-index: 1000;">
+    <span id="translated-word" class="font-weight-bold"></span>
+    <i class="fas fa-volume-up" id="hear-pronunciation" style="cursor: pointer; margin-left: 10px;"></i>
+    <button id="add-to-vocab" class="btn btn-sm btn-success" style="margin-left: 10px;">
+      <i class="fas fa-plus"></i>
+    </button>
+  </div>
+
+{% endblock %}
+
+{% block scripts %}
+  {{ super() }}
+
+  <script>
+    // Function to wrap text nodes in a <span> for each word
+    function wrapTextNodes(element) {
+      const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT, null, false);
+      let node;
+      const nodes = [];
+
+      // Collect all text nodes
+      while (node = walker.nextNode()) {
+        nodes.push(node);
+      }
+
+      nodes.forEach(textNode => {
+        const words = textNode.textContent.split(/\s+/);
+        const fragment = document.createDocumentFragment();
+
+        words.forEach((word, index) => {
+          if (word.trim()) {
+            const span = document.createElement('span');
+            span.textContent = word;
+            span.style.cursor = 'pointer';
+            span.className = 'word';
+            span.onclick = (event) => {
+              translateAndPronounce(word.trim(), event);
+            };
+            fragment.appendChild(span);
+            if (index < words.length - 1) {
+              fragment.appendChild(document.createTextNode(' '));
+            }
+          }
+        });
+
+        textNode.parentNode.replaceChild(fragment, textNode);
+      });
+    }
+
+    // Translation and pronunciation handling
+function translateAndPronounce(word, event) {
+    fetch(`/translate?word=${encodeURIComponent(word)}`)
+        .then(response => response.json())
+        .then(data => {
+            if (data.translation) {
+                const popup = document.getElementById('translation-popup');
+                const translatedText = document.getElementById('translated-word');
+                translatedText.textContent = `${word} - ${data.translation}`;
+
+                // Position the popup next to the clicked word
+                popup.style.display = 'block';
+                popup.style.left = `${event.pageX}px`;
+                popup.style.top = `${event.pageY}px`;
+
+                const pronunciationBtn = document.getElementById('hear-pronunciation');
+                pronunciationBtn.onclick = function() {
+                    const audio = new Audio(`/tts?text=${encodeURIComponent(word)}&lang=en`);
+                    audio.play();
+                };
+
+                const addToVocabBtn = document.getElementById('add-to-vocab');
+                addToVocabBtn.onclick = function() {
+                    saveToVocabulary(word, data.translation);
+                };
+            } else {
+                alert('Translation not found');
+            }
+        })
+        .catch(error => console.error('Error:', error));
+}
+
+    // Function to save the word to the user's personal vocabulary
+function saveToVocabulary(word, translation) {
+    if (!word || !translation) {
+        alert('Cannot add an empty word or translation.');
+        return;
+    }
+
+    fetch('/add_to_vocabulary', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': '{{ csrf_token }}'
+        },
+        body: JSON.stringify({
+            word: word,
+            translation: translation
+        })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            alert(`${word} has been added to your vocabulary!`);
+        } else {
+            alert('Failed to add the word to your vocabulary.');
+        }
+    })
+    .catch(error => console.error('Error:', error));
+}
+
+
+    // Once the document is loaded, wrap words in the content
+    document.addEventListener('DOMContentLoaded', function() {
+      const content = document.getElementById('test-content');
+      wrapTextNodes(content);
+    });
+
+    // Close popup when clicking outside
+    document.addEventListener('click', function(event) {
+      const popup = document.getElementById('translation-popup');
+      if (!popup.contains(event.target) && event.target.className !== 'word') {
+        popup.style.display = 'none';
+      }
+    });
+  </script>
+{% endblock %}
+
+
+--- End of ./templates/learn_test.html ---
+
+
+
+--- Start of ./templates/book_tests.html ---
+
+{% extends "base.html" %}
+
+{% block title %}Home - Test App{% endblock %}
+
+{% block content %}
+  <h1 class="my-4">Available Tests</h1>
+  <div class="row">
+    {% for test in tests %}
+      <div class="col-12 col-md-6 mb-4">
+        <div class="card h-100 shadow-sm">
+          <div class="card-body">
+            <h5 class="card-title">{{ test.name }}</h5>
+            <p>Book: {{ test.book.title }}</p>
+            {% if test.time_limit %}
+              <p>Time Limit: {{ test.time_limit }} minutes</p>
+            {% else %}
+              <p>No Time Limit</p>
+            {% endif %}
+            <div class="btn-group" role="group">
+              <a href="{{ url_for('take_test', test_id=test.id) }}" class="btn btn-primary btn-sm">Take Test</a>
+              <a href="{{ url_for('learn_test', test_id=test.id) }}" class="btn btn-secondary">Learn</a>
+              {% if current_user.is_authenticated and (current_user.is_admin or test.created_by == current_user.id) %}
+                <a href="{{ url_for('edit_test', test_id=test.id) }}" class="btn btn-secondary btn-sm">Edit</a>
+                <form action="{{ url_for('delete_test', test_id=test.id) }}" method="post" style="display: inline;">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token }}"/>
+                  <button type="submit" class="btn btn-danger btn-sm" onclick="return confirm('Are you sure you want to delete this test?');">Delete</button>
+                </form>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+  </div>
+{% else %}
+  <p>No tests available.</p>
+{% endfor %}
+</div>
+{% endblock %}
+
+
+--- End of ./templates/book_tests.html ---
+
