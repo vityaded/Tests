@@ -154,7 +154,9 @@ class Vocabulary(db.Model):
     pronunciation_url = db.Column(db.String(200), nullable=True)
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
     next_review = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
-    review_stage = db.Column(db.Integer, nullable=False, default=1)
+    interval = db.Column(db.Float, nullable=False, default=0)  # Interval in days
+    ease_factor = db.Column(db.Float, nullable=False, default=2.5)  # Default ease factor
+    learning_stage = db.Column(db.Integer, nullable=False, default=0)  # 0: New, 1: First Step, 2: Second Step, 3: Learned
 
 
 
@@ -174,11 +176,18 @@ def normalize_text(text):
     # Convert to lowercase
     return text.lower()
 
+def normalize_text(text):
+    import unicodedata
+    text = unicodedata.normalize('NFKD', text)
+    text = ''.join([c for c in text if c.isalpha()])
+    return text.lower()
+
 @app.route('/review', methods=['GET', 'POST'])
 @login_required
 def review():
-    # Fetch all words due for review
     now = datetime.utcnow()
+    
+    # Fetch words due for learning or review
     vocab_due = Vocabulary.query.filter_by(user_id=current_user.id)\
         .filter(Vocabulary.next_review <= now)\
         .order_by(Vocabulary.next_review).all()
@@ -196,7 +205,7 @@ def review():
         practice_mode = True
         vocab_list = vocab_words  # Use all words for practice
     else:
-        vocab_list = vocab_due  # Use words due for review
+        vocab_list = vocab_due  # Use words due for review or learning
     
     # Use session to keep track of current word index
     word_index = session.get('word_index', 0)
@@ -211,7 +220,7 @@ def review():
         else:
             flash('Review session completed!', 'success')
         return redirect(url_for('my_vocabulary'))
-
+    
     vocab_word = vocab_list[word_index]
 
     if request.method == 'POST':
@@ -221,53 +230,57 @@ def review():
         user_answer = normalize_text(user_answer)
         success = False
 
-        # Determine the correct answer and process based on review stage
+        # Determine the correct answer
         if review_stage == 1:
             correct_answer = normalize_text(vocab_word.translation)
-            if user_answer == correct_answer:
-                success = True
-
-        elif review_stage == 2:
-            correct_answer = normalize_text(vocab_word.word)
-            if user_answer == correct_answer:
-                success = True
-
-        elif review_stage == 3:
-            correct_answer = normalize_text(vocab_word.word)
-            if user_answer == correct_answer:
-                success = True
-
         else:
             correct_answer = normalize_text(vocab_word.word)
-            if user_answer == correct_answer:
-                success = True
+
+        if user_answer == correct_answer:
+            success = True
 
         if not practice_mode:
-            # Update review_stage and next_review based on whether the answer was correct
-            if success:
-                flash('Correct!', 'success')
-                # Increase review_stage or reset if maximum stage reached
-                if vocab_word.review_stage < 4:
-                    vocab_word.review_stage += 1
+            if vocab_word.learning_stage < 8:
+                # Learning steps
+                if success:
+                    vocab_word.learning_stage += 1
+                    if vocab_word.learning_stage == 4:
+                        # First learning step completed, schedule next review in 10 minutes
+                        vocab_word.next_review = now + timedelta(minutes=10)
+                    elif vocab_word.learning_stage == 8:
+                        # Second learning step completed, word is learned
+                        vocab_word.interval = 1  # Starting interval in days
+                        vocab_word.ease_factor = 2.5  # Default ease factor
+                        vocab_word.next_review = now + timedelta(days=vocab_word.interval)
+                    else:
+                        # Schedule next exercise in learning steps
+                        vocab_word.next_review = now + timedelta(minutes=1 if vocab_word.learning_stage < 4 else 10)
+                    flash('Correct!', 'success')
                 else:
-                    vocab_word.review_stage = 1  # Reset to stage 1 after completion
-                # Set next review date based on stage (use spaced repetition intervals)
-                intervals = {1: 1, 2: 2, 3: 4, 4: 7}  # Days until next review
-                next_interval = intervals.get(vocab_word.review_stage, 1)
-                vocab_word.next_review = datetime.utcnow() + timedelta(days=next_interval)
-                db.session.commit()
+                    # Reset learning steps
+                    vocab_word.learning_stage = 0
+                    vocab_word.next_review = now
+                    flash(f'Incorrect! The correct answer was: {correct_answer}', 'danger')
             else:
-                flash(f'Incorrect! The correct answer was: {vocab_word.translation if review_stage == 1 else vocab_word.word}', 'danger')
-                # Reset to stage 1 on failure
-                vocab_word.review_stage = 1
-                vocab_word.next_review = datetime.utcnow() + timedelta(days=1)
-                db.session.commit()
+                # Review phase
+                if success:
+                    # Increase interval based on ease factor
+                    vocab_word.interval *= vocab_word.ease_factor
+                    vocab_word.next_review = now + timedelta(days=vocab_word.interval)
+                    flash('Correct!', 'success')
+                else:
+                    # Reset to learning steps
+                    vocab_word.learning_stage = 0
+                    vocab_word.interval = 0
+                    vocab_word.next_review = now
+                    flash(f'Incorrect! The correct answer was: {correct_answer}', 'danger')
+            db.session.commit()
         else:
             # In practice mode, just provide feedback without updating the database
             if success:
                 flash('Correct!', 'success')
             else:
-                flash(f'Incorrect! The correct answer was: {vocab_word.translation if review_stage == 1 else vocab_word.word}', 'danger')
+                flash(f'Incorrect! The correct answer was: {correct_answer}', 'danger')
 
         # Move to next word
         session['word_index'] = word_index + 1
@@ -278,7 +291,13 @@ def review():
         if practice_mode:
             review_stage = random.randint(1, 4)
         else:
-            review_stage = vocab_word.review_stage
+            # Determine review stage based on learning stage
+            if vocab_word.learning_stage < 8:
+                # Learning steps: cycle through exercises
+                review_stage = (vocab_word.learning_stage % 4) + 1  # 1 to 4
+            else:
+                # Learned words: randomly select an exercise
+                review_stage = random.randint(1, 4)
 
         # Prepare the question and select the template based on review stage
         if review_stage == 1:
@@ -288,20 +307,7 @@ def review():
 
             # Generate options from all vocabulary words
             other_translations = [word.translation for word in vocab_words if word.id != vocab_word.id]
-            if len(other_translations) >= 3:
-                incorrect_options = random.sample(other_translations, 3)
-            elif len(other_translations) > 0:
-                # Not enough options, repeat existing ones
-                times = 3 // len(other_translations)
-                remainder = 3 % len(other_translations)
-                incorrect_options = other_translations * times + other_translations[:remainder]
-                incorrect_options = incorrect_options[:3]  # Ensure we have exactly 3 options
-            else:
-                # Not enough words to generate incorrect options
-                flash('Not enough vocabulary words to generate options. Please add more words.', 'warning')
-                # Move to next word
-                session['word_index'] = word_index + 1
-                return redirect(url_for('review'))
+            incorrect_options = generate_incorrect_options(vocab_word.translation, other_translations)
 
             options = incorrect_options + [vocab_word.translation]
             random.shuffle(options)
@@ -324,19 +330,7 @@ def review():
 
             # Generate options from all vocabulary words
             other_words = [word.word for word in vocab_words if word.id != vocab_word.id]
-            if len(other_words) >= 3:
-                incorrect_options = random.sample(other_words, 3)
-            elif len(other_words) > 0:
-                times = 3 // len(other_words)
-                remainder = 3 % len(other_words)
-                incorrect_options = other_words * times + other_words[:remainder]
-                incorrect_options = incorrect_options[:3]  # Ensure we have exactly 3 options
-            else:
-                # Not enough words to generate incorrect options
-                flash('Not enough vocabulary words to generate options. Please add more words.', 'warning')
-                # Move to next word
-                session['word_index'] = word_index + 1
-                return redirect(url_for('review'))
+            incorrect_options = generate_incorrect_options(vocab_word.word, other_words)
 
             options = incorrect_options + [vocab_word.word]
             random.shuffle(options)
@@ -361,7 +355,6 @@ def review():
             # Ensure the scrambled word is not the same as the correct word
             while scrambled_word == correct_word:
                 scrambled_word = ''.join(random.sample(correct_word, len(correct_word)))
-
 
             return render_template(
                 template,
@@ -388,6 +381,19 @@ def review():
                 practice_mode=practice_mode,
                 review_stage=review_stage  # Include this line
             )
+
+def generate_incorrect_options(correct_option, all_options, num_options=3):
+    other_options = [opt for opt in all_options if opt != correct_option]
+    if len(other_options) >= num_options:
+        return random.sample(other_options, num_options)
+    elif len(other_options) > 0:
+        times = num_options // len(other_options)
+        remainder = num_options % len(other_options)
+        incorrect_options = other_options * times + other_options[:remainder]
+        return incorrect_options[:num_options]
+    else:
+        # If not enough options, repeat the correct option
+        return [correct_option] * num_options
 
 class LearnTestResult(db.Model):
     __tablename__ = 'learn_test_result'
