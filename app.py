@@ -23,7 +23,7 @@ from flask_wtf import CSRFProtect
 from flask_wtf.csrf import CSRFError, generate_csrf
 from sqlalchemy import MetaData
 import bleach
-from forms import SignupForm, LoginForm, AddTestForm, EditTestForm
+from forms import SignupForm, LoginForm, AddTestForm, EditTestForm, TestForm 
 
 # Initialize Flask app
 app = Flask(__name__)
@@ -692,31 +692,28 @@ def add_test():
 
     return render_template('add.html', form=form)
 
-# Route: Edit Test
 @app.route('/edit_test/<int:test_id>', methods=['GET', 'POST'])
 @login_required
 def edit_test(test_id):
     test = Test.query.get_or_404(test_id)
-    if not current_user.is_admin and test.created_by != current_user.id:
-        abort(403)
-
-    form = EditTestForm(obj=test)
+    
+    form = TestForm(obj=test)
+    
     if form.validate_on_submit():
-        test_name = form.test_name.data.strip()
-        test_content = form.test_content.data.strip()
-        time_limit = form.time_limit.data
-
-        # Update test details
-        test.name = test_name
-        test.content = test_content
-        test.time_limit = time_limit
+        test.name = form.name.data
+        test.time_limit = form.time_limit.data
+        test.content = form.content.data
         db.session.commit()
-        # Continue from where the previous file ends
-
-        flash('Test updated successfully!', 'success')
+        flash('Test updated successfully.', 'success')
         return redirect(url_for('index'))
-
+    else:
+        for field, errors in form.errors.items():
+            for error in errors:
+                flash(f"Error in {getattr(form, field).label.text}: {error}", 'danger')
+    
     return render_template('edit_test.html', form=form, test=test)
+
+
 
 # Route: Delete Test
 @app.route('/delete_test/<int:test_id>', methods=['POST'])
@@ -869,6 +866,37 @@ def take_test(test_id):
             time_limit=time_limit
         )
 
+@app.route('/edit_word/<int:word_id>', methods=['GET', 'POST'])
+@login_required
+def edit_word(word_id):
+    word = Vocabulary.query.get_or_404(word_id)
+    if word.user_id != current_user.id:
+        flash('You are not authorized to edit this word.', 'danger')
+        return redirect(url_for('my_vocabulary'))
+    
+    form = EditWordForm(obj=word)
+    if form.validate_on_submit():
+        word.word = form.word.data
+        word.translation = form.translation.data
+        # Include pronunciation_url if applicable
+        db.session.commit()
+        flash('Word updated successfully.', 'success')
+        return redirect(url_for('my_vocabulary'))
+    
+    return render_template('edit_word.html', form=form)
+
+@app.route('/delete_word/<int:word_id>', methods=['POST'])
+@login_required
+def delete_word(word_id):
+    word = Vocabulary.query.get_or_404(word_id)
+    if word.user_id != current_user.id:
+        flash('You are not authorized to delete this word.', 'danger')
+        return redirect(url_for('my_vocabulary'))
+    
+    db.session.delete(word)
+    db.session.commit()
+    flash('Word deleted successfully.', 'success')
+    return redirect(url_for('my_vocabulary'))
 
 @app.route('/search')
 def search():

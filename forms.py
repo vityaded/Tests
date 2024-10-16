@@ -26,3 +26,14 @@ class EditTestForm(FlaskForm):
     time_limit = IntegerField('Time Limit (minutes)', validators=[Optional(), NumberRange(min=1)])
     test_content = TextAreaField('Test Content', validators=[DataRequired()])
     submit = SubmitField('Update Test')
+
+class TestAnswerForm(FlaskForm):
+    answer = TextAreaField('Your Answer', validators=[DataRequired()])
+    submit = SubmitField('Submit Answer')
+
+class TestForm(FlaskForm):
+    name = StringField('Test Name', validators=[DataRequired()])  # Ensure this field is required
+    name = StringField('Test Name', validators=[DataRequired()])
+    time_limit = IntegerField('Time Limit (minutes)', validators=[Optional(), NumberRange(min=1)])
+    content = TextAreaField('Test Content', validators=[DataRequired()])
+    submit = SubmitField('Save Changes')

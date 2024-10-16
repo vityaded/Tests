@@ -8,16 +8,16 @@
   <form method="post">
     {{ form.hidden_tag() }}
     <div class="form-group">
-      {{ form.test_name.label }}
-      {{ form.test_name(class="form-control") }}
+      {{ form.name.label }}
+      {{ form.name(class="form-control") }}
     </div>
     <div class="form-group">
       {{ form.time_limit.label }}
       {{ form.time_limit(class="form-control") }}
     </div>
     <div class="form-group">
-      {{ form.test_content.label }}
-      {{ form.test_content(class="form-control", id="test_content") }}
+      {{ form.content.label }}
+      {{ form.content(class="form-control", id="test_content", required=False) }}
     </div>
     {{ form.submit(class="btn btn-primary") }}
     <a href="{{ url_for('index') }}" class="btn btn-link">Back to Home</a>
@@ -34,7 +34,7 @@
     ClassicEditor.create(document.querySelector('#test_content'))
       .then(editor => {
           window.editor = editor; // Save the editor instance for later use
-          editor.setData(document.querySelector('#test_content').value); // Set existing data
+          // CKEditor will automatically load the initial content from the textarea
       })
       .catch(error => {
           console.error(error);
