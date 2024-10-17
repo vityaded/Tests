@@ -11,18 +11,57 @@
     </div>
   {% endif %}
 
-  <form method="post">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token }}"/>
-   
-    
-    {% for line in processed_content %}
-      <p>{{ line | safe }}</p>
-    {% endfor %}
-    <button type="submit" class="btn btn-primary">Submit Test</button>
-</form>
+  {% if test_type == 'drag_and_drop' %}
+    <form method="post" id="test-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}"/>
 
-  {% if score is not none %}
-    <h2 class="my-4">Your Score: {{ score }} / {{ total }}</h2>
+      <p>Drag and drop the items into the correct order:</p>
+
+      <ul id="sortable" class="list-group mb-3">
+        {% for item in processed_content %}
+          <li class="list-group-item" data-id="{{ item.id }}">{{ item.content|safe }}</li>
+        {% endfor %}
+      </ul>
+
+      <!-- Hidden input to store the order -->
+      <input type="hidden" name="item_order" id="item_order">
+
+      <button type="submit" class="btn btn-primary">Submit Test</button>
+    </form>
+
+    {% if score is not none %}
+      <h2 class="my-4">Your Score: {{ score }} / {{ total }}</h2>
+
+      <!-- Display user's order after submission -->
+      <h3>Your Submitted Order:</h3>
+      <ol>
+        {% for item in user_order %}
+          <li>{{ item }}</li>
+        {% endfor %}
+      </ol>
+
+      <!-- Display correct order after submission -->
+      <h3>Correct Order:</h3>
+      <ol>
+        {% for item in correct_order %}
+          <li>{{ item }}</li>
+        {% endfor %}
+      </ol>
+    {% endif %}
+  {% else %}
+    <form method="post" id="standard-test-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}"/>
+      
+      <div class="form-group">
+        {% for question in processed_content %}
+          <div class="mb-3">
+            {{ question|safe }}
+          </div>
+        {% endfor %}
+      </div>
+
+      <button type="submit" class="btn btn-primary">Submit Test</button>
+    </form>
   {% endif %}
 
   <a href="{{ url_for('index') }}" class="btn btn-link">Back to Home</a>
@@ -52,6 +91,24 @@
     } else {
       document.getElementById("timer").style.display = 'none';
     }
+  </script>
+  {% endif %}
+
+  {% if test_type == 'drag_and_drop' %}
+  <!-- Include jQuery UI for sortable functionality -->
+  <script src="https://code.jquery.com/ui/1.12.1/jquery-ui.js"></script>
+  <script>
+    $(function() {
+      // Make the list sortable
+      $("#sortable").sortable();
+      $("#sortable").disableSelection();
+
+      // Capture the order when submitting the form
+      $("#test-form").on("submit", function() {
+        var itemOrder = $("#sortable").sortable("toArray", { attribute: "data-id" });
+        $("#item_order").val(itemOrder.join(","));
+      });
+    });
   </script>
   {% endif %}
 {% endblock %}

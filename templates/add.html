@@ -7,23 +7,31 @@
   <h1 class="my-4">Add a New Test</h1>
   <form method="post" action="{{ url_for('add_test') }}">
     {{ form.hidden_tag() }}
-    
+
     <div class="form-group">
       {{ form.book_title.label }}
       {{ form.book_title(class="form-control", id="book_title") }}
     </div>
     <div class="form-group">
-      {{ form.test_name.label }}
-      {{ form.test_name(class="form-control", id="test_name") }}
+      {{ form.name.label }}
+      {{ form.name(class="form-control", id="test_name") }}
     </div>
     <div class="form-group">
       {{ form.time_limit.label }}
       {{ form.time_limit(class="form-control") }}
     </div>
     <div class="form-group">
-      {{ form.test_content.label }}
+      {{ form.content.label }}
       <!-- Removed the 'required' attribute from the textarea -->
-      {{ form.test_content(class="form-control", id="test_content", required=False) }}
+      {{ form.content(class="form-control", id="test_content", required=False) }}
+    </div>
+    <div class="form-group form-check">
+      {{ form.shuffle_sentences(class="form-check-input") }}
+      {{ form.shuffle_sentences.label(class="form-check-label") }}
+    </div>
+    <div class="form-group form-check">
+      {{ form.shuffle_paragraphs(class="form-check-input") }}
+      {{ form.shuffle_paragraphs.label(class="form-check-label") }}
     </div>
 
     {{ form.submit(class="btn btn-primary") }}
@@ -43,8 +51,8 @@
   <script src="https://cdn.ckeditor.com/ckeditor5/35.3.0/classic/ckeditor.js"></script>
 
   <script>
-    // Custom Upload Adapter for CKEditor - Base64 Upload
-    function MyCustomUploadAdapterPlugin(editor) {
+     // Custom Upload Adapter for CKEditor - Base64 Upload
+     function MyCustomUploadAdapterPlugin(editor) {
       editor.plugins.get('FileRepository').createUploadAdapter = (loader) => {
         return new MyUploadAdapter(loader);
       };

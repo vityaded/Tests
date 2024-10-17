@@ -4,7 +4,8 @@ import re
 import random
 import requests
 from datetime import datetime, timezone, timedelta
-from functools import wraps 
+from functools import wraps
+import logging
 
 
 from flask import (
@@ -22,8 +23,11 @@ from flask_migrate import Migrate
 from flask_wtf import CSRFProtect
 from flask_wtf.csrf import CSRFError, generate_csrf
 from sqlalchemy import MetaData
+from sqlalchemy.orm import joinedload
 import bleach
 from forms import SignupForm, LoginForm, AddTestForm, EditTestForm, TestForm 
+import json
+
 
 # Initialize Flask app
 app = Flask(__name__)
@@ -119,7 +123,6 @@ def second_review():
     random.shuffle(options)
 
     return render_template('second_review.html', word=selected_word.translation, options=options, correct_word=correct_word)
-
 
 # User loader callback
 @login_manager.user_loader
@@ -404,8 +407,6 @@ class LearnTestResult(db.Model):
 
     user = db.relationship('User', backref='learn_test_results')
     test = db.relationship('Test', backref='learn_test_results')
-
-
 # Define the Book model
 class Book(db.Model):
     __tablename__ = 'book'  # Explicitly specify table name
@@ -421,6 +422,8 @@ class Test(db.Model):
     content = db.Column(db.Text, nullable=False)
     book_id = db.Column(db.Integer, db.ForeignKey('book.id'), nullable=False)
     time_limit = db.Column(db.Integer, nullable=True)  # Time limit in minutes
+    shuffle_sentences = db.Column(db.Boolean, default=False)
+    shuffle_paragraphs = db.Column(db.Boolean, default=False)
     test_results = db.relationship('TestResult', backref='test', lazy=True)
     created_by = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
 
@@ -664,9 +667,11 @@ def add_test():
     form = AddTestForm()
     if form.validate_on_submit():
         book_title = form.book_title.data.strip()
-        test_name = form.test_name.data.strip()
-        test_content = form.test_content.data.strip()
+        test_name = form.name.data.strip()
+        test_content = form.content.data.strip()
         time_limit = form.time_limit.data
+        shuffle_sentences = form.shuffle_sentences.data
+        shuffle_paragraphs = form.shuffle_paragraphs.data
 
         # Check if the book exists
         book = Book.query.filter_by(title=book_title).first()
@@ -676,12 +681,14 @@ def add_test():
             db.session.add(book)
             db.session.commit()
 
-        # Create the new test
+        # Create the new test, include shuffle_sentences and shuffle_paragraphs
         new_test = Test(
             name=test_name,
             content=test_content,
             book=book,
             time_limit=time_limit,
+            shuffle_sentences=shuffle_sentences,  # Added this line
+            shuffle_paragraphs=shuffle_paragraphs,  # Added this line
             created_by=current_user.id
         )
         db.session.add(new_test)
@@ -692,43 +699,8 @@ def add_test():
 
     return render_template('add.html', form=form)
 
-@app.route('/edit_test/<int:test_id>', methods=['GET', 'POST'])
-@login_required
-def edit_test(test_id):
-    test = Test.query.get_or_404(test_id)
-    
-    form = TestForm(obj=test)
-    
-    if form.validate_on_submit():
-        test.name = form.name.data
-        test.time_limit = form.time_limit.data
-        test.content = form.content.data
-        db.session.commit()
-        flash('Test updated successfully.', 'success')
-        return redirect(url_for('index'))
-    else:
-        for field, errors in form.errors.items():
-            for error in errors:
-                flash(f"Error in {getattr(form, field).label.text}: {error}", 'danger')
-    
-    return render_template('edit_test.html', form=form, test=test)
 
 
-
-# Route: Delete Test
-@app.route('/delete_test/<int:test_id>', methods=['POST'])
-@login_required
-def delete_test(test_id):
-    test = Test.query.get_or_404(test_id)
-    if not current_user.is_admin and test.created_by != current_user.id:
-        abort(403)
-
-    db.session.delete(test)
-    db.session.commit()
-    flash('Test deleted successfully!', 'success')
-    return redirect(url_for('index'))
-
-# Route: Take and Submit Test
 @app.route('/test/<int:test_id>', methods=['GET', 'POST'])
 @login_required
 def take_test(test_id):
@@ -739,6 +711,7 @@ def take_test(test_id):
     # Initialize variables
     processed_content = []
     correct_answers = {}
+    original_order = []  # Store the original order of sentences/paragraphs
     question_counter = 1
 
     # Function to replace answers with input fields or dropdowns
@@ -787,10 +760,11 @@ def take_test(test_id):
                 input_class = 'form-control correct' if user_answer.strip().lower() == correct_answer.lower() else 'form-control incorrect'
                 readonly = 'readonly'
             else:
+                user_answer = ""
                 input_class = 'form-control'
                 readonly = ''
 
-            input_html = f'<input type="text" name="{qid}" value="{user_answer if request.method == "POST" else ""}" class="{input_class}" style="width: auto;" {readonly}>'
+            input_html = f'<input type="text" name="{qid}" value="{user_answer}" class="{input_class}" style="width: auto;" {readonly}>'
 
             if request.method == 'POST' and user_answer.strip().lower() != correct_answer.lower():
                 input_html += f' <span class="correct-answer">(Correct answer: {correct_answer})</span>'
@@ -802,12 +776,52 @@ def take_test(test_id):
         line = re.sub(input_pattern, input_repl, line)
         return line
 
-    # Process each line in test content
-    for line in test_content.splitlines():
-        processed_line = replace_answers(line)
-        processed_content.append(processed_line)
+    # Function to process the test content for drag-and-drop tests
+    def process_content(content):
+        nonlocal question_counter, original_order
+        lines = content.splitlines()
+        items = []
 
-    score = 0
+        if test.shuffle_sentences:
+            # Split content into sentences
+            sentences = []
+            for line in lines:
+                sentences.extend(re.split(r'(?<=[.!?])\s+', line.strip()))
+            # Store the original correct order
+            original_order.extend(sentences)
+            # Shuffle sentences
+            random.shuffle(sentences)
+            items = sentences
+        elif test.shuffle_paragraphs:
+            # Split content into paragraphs
+            paragraphs = [line.strip() for line in content.split('\n\n') if line.strip()]
+            # Store the original correct order
+            original_order.extend(paragraphs)
+            # Shuffle paragraphs
+            random.shuffle(paragraphs)
+            items = paragraphs
+        else:
+            # Default behavior (no shuffling)
+            items = lines
+            original_order.extend(lines)
+
+        # Generate HTML for drag-and-drop using unique IDs
+        unique_counter = 1
+        for item in items:
+            item_id = f'item_{unique_counter}'  # Unique identifier
+            correct_answers[item_id] = item.strip()
+            processed_content.append({'id': item_id, 'content': item.strip()})
+            unique_counter += 1
+            question_counter += 1
+
+    if test.shuffle_sentences or test.shuffle_paragraphs:
+        process_content(test_content)
+    else:
+        # Process each line in test content (standard method)
+        for line in test_content.splitlines():
+            processed_line = replace_answers(line)
+            processed_content.append(processed_line)
+
     total_questions = question_counter - 1
 
     if request.method == 'POST':
@@ -825,10 +839,48 @@ def take_test(test_id):
                 flash('Time limit exceeded. Test submitted automatically.', 'warning')
 
         # Calculate score
-        for qid, correct_answer in correct_answers.items():
-            user_answer = request.form.get(qid, '')
-            if user_answer.strip().lower() == correct_answer.lower():
-                score += 1
+        score = 0
+        if test.shuffle_sentences or test.shuffle_paragraphs:
+            # Get user responses for drag-and-drop
+            user_order = request.form.get('item_order', '')
+
+            # Attempt to parse as JSON
+            try:
+                user_order_list = json.loads(user_order)
+            except json.JSONDecodeError:
+                # Fallback to comma-separated if JSON fails
+                user_order_list = user_order.split(',')
+
+            logging.debug(f"Original Order: {original_order}")
+            logging.debug(f"User Order List: {user_order_list}")
+
+            # Ensure both lists (original_order and user_order_list) have the same length
+            if len(user_order_list) != len(original_order):
+                logging.error("Mismatch in the number of items.")
+                flash('Error: The number of items in your order does not match the original content.', 'danger')
+                return render_template(
+                    'take_test.html',
+                    test=test,
+                    processed_content=processed_content,
+                    score=None,
+                    total=total_questions,
+                    correct_order=original_order,
+                    test_type='drag_and_drop'
+                )
+
+            # Compare the user responses to the original order
+            for idx, item_id in enumerate(user_order_list):
+                if idx < len(original_order):
+                    correct_item = original_order[idx]
+                    user_item = correct_answers.get(item_id)
+                    if user_item and user_item == correct_item:
+                        score += 1
+        else:
+            # Calculate score for standard tests
+            for qid, correct_answer in correct_answers.items():
+                user_answer = request.form.get(qid, '')
+                if user_answer.strip().lower() == correct_answer.lower():
+                    score += 1
 
         # Save test result
         test_result = TestResult(
@@ -850,7 +902,8 @@ def take_test(test_id):
             processed_content=processed_content,
             score=score,
             total=total_questions,
-            time_limit=time_limit
+            correct_order=original_order,
+            test_type='drag_and_drop' if test.shuffle_sentences or test.shuffle_paragraphs else 'standard'
         )
 
     else:
@@ -863,8 +916,37 @@ def take_test(test_id):
             processed_content=processed_content,
             score=None,
             total=total_questions,
-            time_limit=time_limit
+            time_limit=time_limit,
+            correct_order=None,
+            test_type='drag_and_drop' if test.shuffle_sentences or test.shuffle_paragraphs else 'standard'
         )
+
+
+
+
+@app.route('/edit_test/<int:test_id>', methods=['GET', 'POST'])
+@login_required
+def edit_test(test_id):
+    test = Test.query.get_or_404(test_id)
+
+    form = EditTestForm(obj=test)
+
+    if form.validate_on_submit():
+        test.name = form.name.data
+        test.time_limit = form.time_limit.data
+        test.content = form.content.data
+        test.shuffle_sentences = form.shuffle_sentences.data
+        test.shuffle_paragraphs = form.shuffle_paragraphs.data
+        db.session.commit()
+        flash('Test updated successfully.', 'success')
+        return redirect(url_for('index'))
+    else:
+        for field, errors in form.errors.items():
+            for error in errors:
+                flash(f"Error in {getattr(form, field).label.text}: {error}", 'danger')
+
+    return render_template('edit_test.html', form=form, test=test)
+
 
 @app.route('/edit_word/<int:word_id>', methods=['GET', 'POST'])
 @login_required
@@ -884,6 +966,24 @@ def edit_word(word_id):
         return redirect(url_for('my_vocabulary'))
     
     return render_template('edit_word.html', form=form)
+
+@app.route('/test/delete/<int:test_id>', methods=['POST'])
+@login_required
+def delete_test(test_id):
+    test = Test.query.get_or_404(test_id)
+
+    # Ensure that only the creator or an admin can delete the test
+    if test.created_by != current_user.id:
+        flash('You do not have permission to delete this test.', 'danger')
+        return redirect(url_for('book_tests', book_id=test.book.id))
+
+    db.session.delete(test)
+    db.session.commit()
+
+    flash('Test deleted successfully.', 'success')
+    return redirect(url_for('book_tests', book_id=test.book.id))
+
+
 
 @app.route('/delete_word/<int:word_id>', methods=['POST'])
 @login_required
