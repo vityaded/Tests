@@ -711,7 +711,7 @@ def take_test(test_id):
     # Initialize variables
     processed_content = []
     correct_answers = {}
-    original_order = []  # Store the original order of sentences/paragraphs
+    original_order = []  # Store the original order of tile IDs
     question_counter = 1
 
     # Function to replace answers with input fields or dropdowns
@@ -730,20 +730,22 @@ def take_test(test_id):
             question_counter += 1
 
             if request.method == 'POST':
-                user_answer = request.form.get(qid, '').strip().lower()
-                select_class = 'custom-select correct' if user_answer == correct_answer.lower() else 'custom-select incorrect'
+                user_answer = request.form.get(qid, '').strip()
+                select_class = 'custom-select correct' if user_answer.lower() == correct_answer.lower() else 'custom-select incorrect'
                 disabled = 'disabled'
             else:
+                user_answer = ''
                 select_class = 'custom-select'
                 disabled = ''
 
             select_html = f'<select name="{qid}" class="{select_class}" {disabled} style="display: inline-block; width: auto;">'
+            select_html += '<option value="">-- Select an option --</option>'
             for option in options:
-                selected = 'selected' if request.method == 'POST' and user_answer == option.strip().lower() else ''
+                selected = 'selected' if user_answer.lower() == option.lower() else ''
                 select_html += f'<option value="{option}" {selected}>{option}</option>'
             select_html += '</select>'
 
-            if request.method == 'POST' and user_answer != correct_answer.lower():
+            if request.method == 'POST' and user_answer.lower() != correct_answer.lower():
                 select_html += f' <span class="correct-answer">(Correct answer: {correct_answer})</span>'
 
             return select_html
@@ -760,7 +762,7 @@ def take_test(test_id):
                 input_class = 'form-control correct' if user_answer.strip().lower() == correct_answer.lower() else 'form-control incorrect'
                 readonly = 'readonly'
             else:
-                user_answer = ""
+                user_answer = ''
                 input_class = 'form-control'
                 readonly = ''
 
@@ -778,41 +780,42 @@ def take_test(test_id):
 
     # Function to process the test content for drag-and-drop tests
     def process_content(content):
-        nonlocal question_counter, original_order
+        nonlocal question_counter, original_order, processed_content
         lines = content.splitlines()
-        items = []
 
         if test.shuffle_sentences:
             # Split content into sentences
             sentences = []
             for line in lines:
                 sentences.extend(re.split(r'(?<=[.!?])\s+', line.strip()))
-            # Store the original correct order
-            original_order.extend(sentences)
-            # Shuffle sentences
-            random.shuffle(sentences)
-            items = sentences
+            # Store the original correct order using unique tile IDs
+            for idx, sentence in enumerate(sentences):
+                item_id = f'item_{idx + 1}'
+                original_order.append(item_id)
+                correct_answers[item_id] = sentence.strip()
+                processed_content.append({'id': item_id, 'content': sentence.strip()})
+                question_counter += 1
+            # Shuffle sentences (this changes the presentation order)
+            if request.method == 'GET':
+                random.shuffle(processed_content)
         elif test.shuffle_paragraphs:
             # Split content into paragraphs
             paragraphs = [line.strip() for line in content.split('\n\n') if line.strip()]
-            # Store the original correct order
-            original_order.extend(paragraphs)
-            # Shuffle paragraphs
-            random.shuffle(paragraphs)
-            items = paragraphs
+            # Store the original correct order using unique tile IDs
+            for idx, paragraph in enumerate(paragraphs):
+                item_id = f'item_{idx + 1}'
+                original_order.append(item_id)
+                correct_answers[item_id] = paragraph.strip()
+                processed_content.append({'id': item_id, 'content': paragraph.strip()})
+                question_counter += 1
+            # Shuffle paragraphs (this changes the presentation order)
+            if request.method == 'GET':
+                random.shuffle(processed_content)
         else:
             # Default behavior (no shuffling)
-            items = lines
-            original_order.extend(lines)
-
-        # Generate HTML for drag-and-drop using unique IDs
-        unique_counter = 1
-        for item in items:
-            item_id = f'item_{unique_counter}'  # Unique identifier
-            correct_answers[item_id] = item.strip()
-            processed_content.append({'id': item_id, 'content': item.strip()})
-            unique_counter += 1
-            question_counter += 1
+            for idx, line in enumerate(lines):
+                processed_line = replace_answers(line)
+                processed_content.append(processed_line)
 
     if test.shuffle_sentences or test.shuffle_paragraphs:
         process_content(test_content)
@@ -844,19 +847,11 @@ def take_test(test_id):
             # Get user responses for drag-and-drop
             user_order = request.form.get('item_order', '')
 
-            # Attempt to parse as JSON
-            try:
-                user_order_list = json.loads(user_order)
-            except json.JSONDecodeError:
-                # Fallback to comma-separated if JSON fails
-                user_order_list = user_order.split(',')
-
-            logging.debug(f"Original Order: {original_order}")
-            logging.debug(f"User Order List: {user_order_list}")
+            # Parse user_order into a list of individual item IDs
+            user_order_list = user_order.split(',')
 
             # Ensure both lists (original_order and user_order_list) have the same length
             if len(user_order_list) != len(original_order):
-                logging.error("Mismatch in the number of items.")
                 flash('Error: The number of items in your order does not match the original content.', 'danger')
                 return render_template(
                     'take_test.html',
@@ -865,16 +860,31 @@ def take_test(test_id):
                     score=None,
                     total=total_questions,
                     correct_order=original_order,
-                    test_type='drag_and_drop'
+                    test_type='drag_and_drop',
+                    correct_answers=correct_answers
                 )
 
-            # Compare the user responses to the original order
+            # Compare the user responses (tile IDs) to the original order (tile IDs)
+            user_processed_content = []
             for idx, item_id in enumerate(user_order_list):
-                if idx < len(original_order):
-                    correct_item = original_order[idx]
-                    user_item = correct_answers.get(item_id)
-                    if user_item and user_item == correct_item:
-                        score += 1
+                item_content = correct_answers[item_id]
+                is_correct_position = item_id == original_order[idx]
+                if is_correct_position:
+                    item_class = 'correct'
+                else:
+                    item_class = 'incorrect'
+                user_processed_content.append({
+                    'id': item_id,
+                    'content': item_content,
+                    'is_correct_position': is_correct_position,
+                    'class': item_class
+                })
+                if is_correct_position:
+                    score += 1
+
+            # Update processed_content to reflect user's ordering
+            processed_content = user_processed_content
+
         else:
             # Calculate score for standard tests
             for qid, correct_answer in correct_answers.items():
@@ -903,7 +913,8 @@ def take_test(test_id):
             score=score,
             total=total_questions,
             correct_order=original_order,
-            test_type='drag_and_drop' if test.shuffle_sentences or test.shuffle_paragraphs else 'standard'
+            test_type='drag_and_drop' if test.shuffle_sentences or test.shuffle_paragraphs else 'standard',
+            correct_answers=correct_answers
         )
 
     else:
@@ -918,7 +929,8 @@ def take_test(test_id):
             total=total_questions,
             time_limit=time_limit,
             correct_order=None,
-            test_type='drag_and_drop' if test.shuffle_sentences or test.shuffle_paragraphs else 'standard'
+            test_type='drag_and_drop' if test.shuffle_sentences or test.shuffle_paragraphs else 'standard',
+            correct_answers=correct_answers
         )
 
 

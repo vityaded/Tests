@@ -186,3 +186,39 @@ footer {
 }
 
 
+.tile-container {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* Tile style: distinct background, padding, border, and hover effects */
+.tile {
+  background-color: #e9ecef; /* Light background to distinguish tiles */
+  border-radius: 10px;
+  padding: 15px;
+  margin-bottom: 10px;
+  cursor: grab;
+  box-shadow: 0px 2px 5px rgba(0, 0, 0, 0.1); /* Slight shadow for tile effect */
+  transition: background-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+/* Hover effect to make the tile feel interactive */
+.tile:hover {
+  background-color: #dee2e6;
+  cursor: grabbing;
+  box-shadow: 0px 4px 10px rgba(0, 0, 0, 0.15); /* Slightly stronger shadow on hover */
+}
+
+/* Active (being dragged) effect */
+.tile:active {
+  background-color: #ced4da;
+  box-shadow: none; /* No shadow when dragging */
+}
+
+/* Text inside the tile centered */
+.tile-content {
+  text-align: center;
+  font-weight: bold;
+  font-size: 1.1rem;
+}
